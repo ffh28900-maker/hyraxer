@@ -1,0 +1,6 @@
+{
+  "name": "Спаситель Домании - Saviour of Domania",
+  "description": "Ультра-динамичный 3D шутер от первого лица с элементами паркура в стиле Ultrakill. HYRAX: REQUIEM",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
