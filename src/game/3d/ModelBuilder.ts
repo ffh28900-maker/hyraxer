@@ -2269,8 +2269,8 @@ export class ModelBuilder {
       case 'doman_archer': {
         // ГЕОЛОГИЧЕСКИЙ ПАРАЗИТ: animated crystal parasite - a rubble golem shot through
         // with glowing lime crystal clusters, wrapped in a faint gas haze.
-        const rockMat = this.getMaterial('solid_slate_rock', () => new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.9 }));
-        const rockLightMat = this.getMaterial('rock_light_grey', () => new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.95 }));
+        const rockMat = this.getMaterial('parasite_rock_dark', () => new THREE.MeshStandardMaterial({ color: 0x57534e, roughness: 0.95 }));
+        const rockLightMat = this.getMaterial('parasite_rock_light', () => new THREE.MeshStandardMaterial({ color: 0x8a8073, roughness: 0.95 }));
         const crystalMat = this.getMaterial('solid_lime_crystal', () => new THREE.MeshStandardMaterial({
           color: 0x84cc16,
           emissive: 0x84cc16,
@@ -2321,11 +2321,11 @@ export class ModelBuilder {
         }
 
         // Glowing core in the chest cavity + containment shards
-        const core = new THREE.Mesh(this.getGeo('crystal_core', () => new THREE.OctahedronGeometry(0.2, 1)), coreMat);
+        const core = new THREE.Mesh(this.getGeo('crystal_core', () => new THREE.OctahedronGeometry(0.25, 1)), coreMat);
         core.position.set(0, 1.42, 0.34);
         group.add(core);
 
-        const shardGeo = this.getGeo('crystal_shard_small', () => new THREE.ConeGeometry(0.055, 0.2, 6));
+        const shardGeo = this.getGeo('crystal_shard_small', () => new THREE.ConeGeometry(0.07, 0.26, 6));
         for (let i = 0; i < 6; i++) {
           const a = (i / 6) * Math.PI * 2;
           const shard = new THREE.Mesh(shardGeo, crystalMat);
@@ -2335,7 +2335,7 @@ export class ModelBuilder {
         }
 
         // Back cluster: tall crystal spires
-        const spireGeo = this.getGeo('crystal_spire', () => new THREE.ConeGeometry(0.11, 0.72, 6));
+        const spireGeo = this.getGeo('crystal_spire', () => new THREE.ConeGeometry(0.14, 0.88, 6));
         for (let i = 0; i < 7; i++) {
           const spire = new THREE.Mesh(spireGeo, crystalMat);
           const a = (i / 7) * Math.PI * 2;
@@ -2461,17 +2461,18 @@ export class ModelBuilder {
         group.add(crest);
 
         // Great curved horns (two segments each so they arc)
-        const hornBaseGeo = this.getGeo('imp_horn_base', () => new THREE.ConeGeometry(0.1, 0.42, 8));
-        const hornTipGeo = this.getGeo('imp_horn_tip', () => new THREE.ConeGeometry(0.055, 0.34, 8));
+        const hornMat = this.getMaterial('horn_pale_bone', () => new THREE.MeshStandardMaterial({ color: 0xa8a29e, roughness: 0.55 }));
+        const hornBaseGeo = this.getGeo('imp_horn_base', () => new THREE.ConeGeometry(0.13, 0.52, 8));
+        const hornTipGeo = this.getGeo('imp_horn_tip', () => new THREE.ConeGeometry(0.075, 0.44, 8));
         for (const side of [-1, 1]) {
-          const hornBase = new THREE.Mesh(hornBaseGeo, obsidianMat);
-          hornBase.position.set(side * 0.3, 2.08, 0.04);
-          hornBase.rotation.z = -side * 0.6;
+          const hornBase = new THREE.Mesh(hornBaseGeo, hornMat);
+          hornBase.position.set(side * 0.31, 2.1, 0.04);
+          hornBase.rotation.z = -side * 0.75;
           group.add(hornBase);
 
-          const hornTip = new THREE.Mesh(hornTipGeo, obsidianMat);
-          hornTip.position.set(side * 0.52, 2.28, 0.04);
-          hornTip.rotation.z = -side * 1.05;
+          const hornTip = new THREE.Mesh(hornTipGeo, hornMat);
+          hornTip.position.set(side * 0.6, 2.34, 0.04);
+          hornTip.rotation.z = -side * 1.25;
           group.add(hornTip);
         }
 
@@ -2602,24 +2603,24 @@ export class ModelBuilder {
         }
 
         // Iron pack frame + rack of hell charges
-        const rack = new THREE.Mesh(this.getGeo('hell_rack', () => new THREE.BoxGeometry(0.56, 0.08, 0.7)), ironMat);
-        rack.position.set(0, 1.14, -0.06);
+        const rack = new THREE.Mesh(this.getGeo('hell_rack', () => new THREE.BoxGeometry(0.66, 0.09, 0.74)), ironMat);
+        rack.position.set(0, 1.2, -0.06);
         group.add(rack);
 
-        const canGeo = this.getGeo('hell_can', () => new THREE.CylinderGeometry(0.1, 0.1, 0.42, 12));
+        const canGeo = this.getGeo('hell_can', () => new THREE.CylinderGeometry(0.12, 0.12, 0.52, 12));
         const bandGeo = this.getGeo('hell_can_band', () => new THREE.TorusGeometry(0.103, 0.018, 6, 12));
         const capGeo = this.getGeo('hell_can_cap', () => new THREE.CylinderGeometry(0.055, 0.075, 0.08, 10));
         const ringGeo = this.getGeo('hell_can_ring', () => new THREE.TorusGeometry(0.04, 0.01, 5, 10));
         for (let i = 0; i < 5; i++) {
-          const cx = -0.22 + i * 0.11;
-          const cz = i % 2 === 0 ? -0.1 : 0.06;
-          const cy = 1.4 + (i % 2 === 0 ? 0.0 : 0.07);
+          const cx = -0.26 + i * 0.13;
+          const cz = i % 2 === 0 ? -0.12 : 0.08;
+          const cy = 1.56 + (i % 2 === 0 ? 0.0 : 0.08);
 
           const can = new THREE.Mesh(canGeo, canisterMat);
           can.position.set(cx, cy, cz);
           group.add(can);
 
-          for (const by of [-0.1, 0.1]) {
+          for (const by of [-0.13, 0.13]) {
             const band = new THREE.Mesh(bandGeo, glowBandMat);
             band.position.set(cx, cy + by, cz);
             band.rotation.x = Math.PI / 2;
@@ -2627,11 +2628,11 @@ export class ModelBuilder {
           }
 
           const cap = new THREE.Mesh(capGeo, ironMat);
-          cap.position.set(cx, cy + 0.25, cz);
+          cap.position.set(cx, cy + 0.3, cz);
           group.add(cap);
 
           const ring = new THREE.Mesh(ringGeo, ironMat);
-          ring.position.set(cx, cy + 0.33, cz);
+          ring.position.set(cx, cy + 0.39, cz);
           ring.rotation.x = Math.PI / 2;
           group.add(ring);
         }

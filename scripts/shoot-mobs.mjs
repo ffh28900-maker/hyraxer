@@ -36,6 +36,15 @@ await page.waitForFunction(() => !!window.__engine, null, { timeout: 300000 });
 await page.waitForFunction(() => window.__engine.levelTimeSec > 0.5, null, { timeout: 300000 });
 console.error('gallery loaded');
 
+// Gallery name plates float right where the horns/packs are - hide them for review shots.
+await page.evaluate(() => {
+  for (const e of window.__engine.enemies.enemies) {
+    e.mesh.traverse((c) => {
+      if (c.isSprite) c.visible = false;
+    });
+  }
+});
+
 const present = await page.evaluate(() => window.__engine.enemies.enemies.map((e) => e.type));
 console.error('types in gallery:', JSON.stringify(present));
 
@@ -51,7 +60,7 @@ for (const type of types) {
       const dist = 3.4;
       e.player.position.set(p.x + Math.sin(rad) * dist, p.y + 1.5, p.z + Math.cos(rad) * dist);
       e.player.velocity.set(0, 0, 0);
-      e.player.yaw = -rad;
+      e.player.yaw = rad; // forward is (-sin(yaw), 0, -cos(yaw)), so yaw == orbit angle
       e.player.pitch = -0.16;
       e.player.camera.position.copy(e.player.position);
       e.player.camera.rotation.set(e.player.pitch, e.player.yaw, 0, 'YXZ');
