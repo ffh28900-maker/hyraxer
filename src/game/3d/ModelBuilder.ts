@@ -1904,9 +1904,10 @@ export class ModelBuilder {
         blade.rotation.x = Math.PI / 6;
         group.add(blade);
 
-        const flameLight = new THREE.PointLight(0xff3300, 5.5, 9);
-        flameLight.position.set(0.68, 1.38, 0.58);
-        group.add(flameLight);
+        // PERF: no per-enemy PointLight. Every imp light escaped SceneCuller's fixed
+        // 8-light budget (the culler only collects lights present at level load), so each
+        // imp death changed NUM_POINT_LIGHTS and forced three.js to recompile every
+        // material's shader mid-fight. The emissive blade already reads as fire.
 
         // Skull Shield
         const shieldGeo = this.getGeo('box_0.82_1.15_0.14', () => new THREE.BoxGeometry(0.82, 1.15, 0.14));

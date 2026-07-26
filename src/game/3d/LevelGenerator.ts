@@ -289,11 +289,12 @@ export class LevelGenerator {
     let biomeName = 'Ruined Cyber City';
     let fogColor = 0x1a0a03;
     let lightColor = 0xff5500;
-    let floorTexture: THREE.CanvasTexture = TextureGenerator.getAsphaltLavaTexture();
-    let wallTexture: THREE.CanvasTexture = TextureGenerator.getCityWallTexture();
+    // Every biome branch below assigns these - no need to pre-generate city textures
+    // that levels 1-17 never use.
+    let floorTexture: THREE.CanvasTexture;
+    let wallTexture: THREE.CanvasTexture;
 
     const isLabLevel = levelNumber <= 4;
-    const isCityLevel = false; // Levels 1-4 are now Abandoned Biohazard Facility
 
     if (levelNumber >= 1 && levelNumber <= 4) {
       biomeIndex = 0;
@@ -395,20 +396,6 @@ export class LevelGenerator {
           roughness: 0.8,
           metalness: 0.5,
         })) as THREE.MeshStandardMaterial);
-
-    // Night Sky Dome for open-air City Levels
-    if (isCityLevel) {
-      const skyTexture = TextureGenerator.getNightSkyTexture();
-      const skyGeo = ModelBuilder.getGeo('lg:SphereGeometry:8c11fb3df920', () => new THREE.SphereGeometry(450, 32, 24));
-      const skyMat = new THREE.MeshBasicMaterial({
-        map: skyTexture,
-        side: THREE.BackSide,
-        depthWrite: false,
-      });
-      const skyMesh = new THREE.Mesh(skyGeo, skyMat);
-      skyMesh.position.set(0, 20, -150);
-      scene.add(skyMesh);
-    }
 
     /**
      * PERF: freeze a static object's transform so THREE stops recomposing its matrix.
@@ -1880,7 +1867,7 @@ export class LevelGenerator {
           scene.add(corrFloor1);
 
           // Corridor Ceiling 1
-          if (!isCityLevel) {
+          {
             const corrCeil1 = new THREE.Mesh(
               new THREE.BoxGeometry(doorWidth + 1.2, 0.8, f1Length + 0.4),
               ceilingMat
@@ -1904,7 +1891,7 @@ export class LevelGenerator {
         markStatic(corrFloorH);
         scene.add(corrFloorH);
 
-        if (!isCityLevel) {
+        {
           const corrCeilH = new THREE.Mesh(
             new THREE.BoxGeometry(hWidth + 1.2, 0.8, doorWidth + 1.2),
             ceilingMat
@@ -1939,7 +1926,7 @@ export class LevelGenerator {
           scene.add(corrFloor2);
 
           // Corridor Ceiling 2
-          if (!isCityLevel) {
+          {
             const corrCeil2 = new THREE.Mesh(
               new THREE.BoxGeometry(doorWidth + 1.2, 0.8, f2Length + 0.4),
               ceilingMat
@@ -2174,10 +2161,15 @@ export class LevelGenerator {
     );
     portal.position.copy(finishPos);
     portal.rotation.x = Math.PI / 2;
+    // BUGFIX: the portal/light were pushed into the room object list but never parented to
+    // the scene (this code runs after scene.add is restored above), so the finish portal
+    // was invisible and its light burned a SceneCuller budget slot while rendering nothing.
+    scene.add(portal);
     roomObjLists[rooms.length - 1].push(portal);
 
     const portalLight = new THREE.PointLight(isBossLevel ? 0xff0044 : 0xffaa00, 4.0, 15);
     portalLight.position.copy(finishPos);
+    scene.add(portalLight);
     roomObjLists[rooms.length - 1].push(portalLight);
 
     return {
@@ -3504,101 +3496,6 @@ export class LevelGenerator {
       beam.position.set(0, -0.6, bz);
       group.add(beam);
     }
-
-    return group;
-  }
-
-  public static createUltraDetailedTacticalCoverCrate(
-    width: number,
-    height: number,
-    depth: number
-  ): THREE.Group {
-    const group = new THREE.Group();
-
-    // Materials
-    const bodyMat = (ModelBuilder.getMaterial('lg:MeshStandardMaterial:f67d48c89420', () => new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.4, metalness: 0.75 })) as THREE.MeshStandardMaterial);
-    const frameMat = (ModelBuilder.getMaterial('lg:MeshStandardMaterial:ce085c54b213', () => new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.3, metalness: 0.85 })) as THREE.MeshStandardMaterial);
-    const bumperMat = (ModelBuilder.getMaterial('lg:MeshStandardMaterial:8c2a4f985bd5', () => new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.5, metalness: 0.6 })) as THREE.MeshStandardMaterial);
-    const chromeMat = (ModelBuilder.getMaterial('lg:MeshStandardMaterial:bb73d3ae9c83', () => new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.15, metalness: 0.95 })) as THREE.MeshStandardMaterial);
-    const warningRedMat = (ModelBuilder.getMaterial('lg:MeshBasicMaterial:af7c1c8b4672', () => new THREE.MeshBasicMaterial({ color: 0xef4444 })) as THREE.MeshBasicMaterial);
-    const warningYellowMat = (ModelBuilder.getMaterial('lg:MeshBasicMaterial:d1cb19c772e3', () => new THREE.MeshBasicMaterial({ color: 0xf59e0b })) as THREE.MeshBasicMaterial);
-    const ledGlowMat = (ModelBuilder.getMaterial('lg:MeshBasicMaterial:4f09535dfd0b', () => new THREE.MeshBasicMaterial({ color: 0x22c55e })) as THREE.MeshBasicMaterial); // Glowing green active LED
-
-    // 1. Core Solid Box (for physics collision 'wall')
-    const coreBox = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), bodyMat);
-    coreBox.name = 'wall';
-    group.add(coreBox);
-
-    // 2. Heavy Corner Armor Bumpers with Steel Bolts (8 corners)
-    const halfW = width / 2;
-    const halfH = height / 2;
-    const halfD = depth / 2;
-
-    [-halfW, halfW].forEach((x) => {
-      [-halfH, halfH].forEach((y) => {
-        [-halfD, halfD].forEach((z) => {
-          const bumper = new THREE.Mesh(ModelBuilder.getGeo('lg:BoxGeometry:1292bb4b2a97', () => new THREE.BoxGeometry(0.3, 0.3, 0.3)), bumperMat);
-          bumper.position.set(
-            x + (x > 0 ? -0.1 : 0.1),
-            y + (y > 0 ? -0.1 : 0.1),
-            z + (z > 0 ? -0.1 : 0.1)
-          );
-          group.add(bumper);
-
-          // Corner bolt
-          const bolt = new THREE.Mesh(ModelBuilder.getGeo('lg:SphereGeometry:81d3652f90e5', () => new THREE.SphereGeometry(0.04, 8, 8)), chromeMat);
-          bolt.position.set(
-            x + (x > 0 ? 0.02 : -0.02),
-            y + (y > 0 ? 0.02 : -0.02),
-            z + (z > 0 ? 0.02 : -0.02)
-          );
-          group.add(bolt);
-        });
-      });
-    });
-
-    // 3. Horizontal and Vertical Structural Reinforcement Ribs
-    [-halfW + 0.02, halfW - 0.02].forEach((xPos) => {
-      const rib = new THREE.Mesh(new THREE.BoxGeometry(0.06, height * 0.8, depth * 0.8), frameMat);
-      rib.position.set(xPos, 0, 0);
-      group.add(rib);
-    });
-
-    [-halfD + 0.02, halfD - 0.02].forEach((zPos) => {
-      const rib = new THREE.Mesh(new THREE.BoxGeometry(width * 0.8, height * 0.8, 0.06), frameMat);
-      rib.position.set(0, 0, zPos);
-      group.add(rib);
-    });
-
-    // 4. Front & Rear Hydraulic Latches and Handle Grips
-    [-halfD - 0.02, halfD + 0.02].forEach((zPos) => {
-      const latch = new THREE.Mesh(ModelBuilder.getGeo('lg:BoxGeometry:a274c5b89cad', () => new THREE.BoxGeometry(0.4, 0.25, 0.08)), chromeMat);
-      latch.position.set(0, 0.2 * height, zPos);
-      group.add(latch);
-
-      const handleBar = new THREE.Mesh(ModelBuilder.getGeo('lg:TorusGeometry:3f829515c095', () => new THREE.TorusGeometry(0.12, 0.025, 8, 12, Math.PI)), chromeMat);
-      handleBar.position.set(0, -0.2 * height, zPos);
-      group.add(handleBar);
-    });
-
-    // 5. Side Hazard Label / Stencil Warning Screen & Status LEDs
-    const labelPlate = new THREE.Mesh(new THREE.BoxGeometry(width * 0.5, height * 0.3, 0.02), warningYellowMat);
-    labelPlate.position.set(0, 0.1 * height, halfD + 0.02);
-    group.add(labelPlate);
-
-    const labelSymbol = new THREE.Mesh(new THREE.BoxGeometry(width * 0.2, height * 0.15, 0.03), warningRedMat);
-    labelSymbol.position.set(0, 0.1 * height, halfD + 0.025);
-    group.add(labelSymbol);
-
-    // Status Indicator Light (Glowing Green/Cyan Dot)
-    const statusLed = new THREE.Mesh(ModelBuilder.getGeo('lg:SphereGeometry:9dd485d4993f', () => new THREE.SphereGeometry(0.06, 12, 12)), ledGlowMat);
-    statusLed.position.set(halfW * 0.6, halfH - 0.15, halfD + 0.02);
-    group.add(statusLed);
-
-    // 6. Top Rubber Grip Mat / Solar Power Plate
-    const topPad = new THREE.Mesh(new THREE.BoxGeometry(width - 0.4, 0.04, depth - 0.4), frameMat);
-    topPad.position.set(0, halfH + 0.02, 0);
-    group.add(topPad);
 
     return group;
   }

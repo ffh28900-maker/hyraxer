@@ -1,61 +1,29 @@
 import * as THREE from 'three';
 
-interface WhiteParticle {
-  mesh: THREE.Mesh;
-  velocity: THREE.Vector3;
-  life: number;
-  maxLife: number;
-  initialScale: number;
-}
-
-interface ImpactRing {
-  mesh: THREE.Mesh;
-  life: number;
-  maxLife: number;
-  maxScale: number;
-}
-
-interface ImpactFlash {
-  mesh: THREE.Mesh;
-  life: number;
-  maxLife: number;
-  maxScale: number;
-}
-
-interface ImpactLight {
-  light: THREE.PointLight;
-  life: number;
-  maxLife: number;
-  initialIntensity: number;
-}
-
+/**
+ * Pooled impact FX. Only the ice-shatter burst is live gameplay FX today; the generic
+ * bullet-hit splash (`spawn`) is intentionally a no-op.
+ *
+ * PERF: this class used to also build 3 extra geometries and 6 extra materials for
+ * particle/ring/flash/light systems that were never populated - allocated (and leaked,
+ * being attached to nothing) on every level load. Only the resources the live pools
+ * actually reference remain.
+ */
 export class HitSplashes {
   private scene: THREE.Scene;
-  private particles: WhiteParticle[] = [];
-  private rings: ImpactRing[] = [];
-  private flashes: ImpactFlash[] = [];
-  private lights: ImpactLight[] = [];
 
   // Geometries
   private sparkGeo: THREE.BoxGeometry;
   private ringGeo: THREE.TorusGeometry;
-  private ringGeo2: THREE.TorusGeometry;
-  private flashGeo: THREE.SphereGeometry;
-  private starGeo: THREE.PlaneGeometry;
 
   // Shared Materials for high performance & minimal GC
-  private whiteFlashMat: THREE.MeshBasicMaterial;
-  private critStarMat: THREE.MeshBasicMaterial;
-  private stdStarMat: THREE.MeshBasicMaterial;
-  private ringMatPrimary: THREE.MeshBasicMaterial;
   private ringMatSecondary: THREE.MeshBasicMaterial;
-  private whiteSparkMat: THREE.MeshBasicMaterial;
   private cyanSparkMat: THREE.MeshBasicMaterial;
-  private goldSparkMat: THREE.MeshBasicMaterial;
 
   private particlePool: { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; maxLife: number; initialScale: number; active: boolean }[] = [];
   private ringPool: { mesh: THREE.Mesh; life: number; maxLife: number; maxScale: number; active: boolean }[] = [];
   private tempTarget = new THREE.Vector3();
+  private tempOffset = new THREE.Vector3();
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -63,38 +31,7 @@ export class HitSplashes {
     // Optimized geometries with reasonable polygon counts
     this.sparkGeo = new THREE.BoxGeometry(0.10, 0.10, 0.40);
     this.ringGeo = new THREE.TorusGeometry(0.5, 0.06, 8, 16);
-    this.ringGeo2 = new THREE.TorusGeometry(0.35, 0.05, 8, 14);
-    this.flashGeo = new THREE.SphereGeometry(0.5, 8, 8);
-    this.starGeo = new THREE.PlaneGeometry(1.8, 1.8);
 
-    // Instantiate static materials once
-    this.whiteFlashMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 1.0,
-      depthWrite: false,
-    });
-    this.critStarMat = new THREE.MeshBasicMaterial({
-      color: 0xffd700,
-      transparent: true,
-      opacity: 0.95,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    this.stdStarMat = new THREE.MeshBasicMaterial({
-      color: 0x00ffff,
-      transparent: true,
-      opacity: 0.95,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
-    this.ringMatPrimary = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.95,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-    });
     this.ringMatSecondary = new THREE.MeshBasicMaterial({
       color: 0x00ffff,
       transparent: true,
@@ -102,9 +39,7 @@ export class HitSplashes {
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    this.whiteSparkMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1.0, depthWrite: false });
     this.cyanSparkMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 1.0, depthWrite: false });
-    this.goldSparkMat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 1.0, depthWrite: false });
 
     // Pre-allocate pools
     for (let i = 0; i < 40; i++) {
@@ -150,7 +85,8 @@ export class HitSplashes {
       ring.life = 0.3;
       ring.maxLife = 0.3;
       ring.maxScale = 4.5;
-      ring.mesh.position.copy(position).add(new THREE.Vector3(0, 1.2, 0));
+      ring.mesh.position.copy(position);
+      ring.mesh.position.y += 1.2;
       ring.mesh.rotation.x = Math.PI / 2;
       ring.mesh.visible = true;
     }
@@ -160,11 +96,13 @@ export class HitSplashes {
     for (const p of this.particlePool) {
       if (p.active) continue;
       p.active = true;
-      p.mesh.position.copy(position).add(new THREE.Vector3(
+      // PERF: scratch vector - this used to allocate 11 Vector3 per burst.
+      this.tempOffset.set(
         (Math.random() - 0.5) * 1.2,
         1.0 + (Math.random() - 0.5) * 1.2,
         (Math.random() - 0.5) * 1.2
-      ));
+      );
+      p.mesh.position.copy(position).add(this.tempOffset);
 
       p.velocity.set(
         (Math.random() - 0.5) * 18.0,
@@ -228,5 +166,13 @@ export class HitSplashes {
       p.active = false;
       p.mesh.visible = false;
     }
+  }
+
+  /** Dispose pooled GPU resources (meshes are owned by the scene teardown). */
+  public destroy() {
+    this.sparkGeo.dispose();
+    this.ringGeo.dispose();
+    this.ringMatSecondary.dispose();
+    this.cyanSparkMat.dispose();
   }
 }
