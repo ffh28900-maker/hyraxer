@@ -342,7 +342,15 @@ export class EnemyEngine {
     this.losScratchRay.direction.copy(dir);
     const farSq = far * far;
     for (let i = 0; i < obstacles.length; i++) {
-      const hit = this.losScratchRay.intersectBox(boxes[i], this.losScratchHit);
+      const box = boxes[i];
+      // Ray.intersectBox returns the EXIT point when the origin is inside the box, which
+      // could reject an obstacle whose triangles are well within range - treat an
+      // interior origin as distance 0 (always include) to stay a conservative superset.
+      if (box.containsPoint(origin)) {
+        this.rayCandidatesTemp.push(obstacles[i]);
+        continue;
+      }
+      const hit = this.losScratchRay.intersectBox(box, this.losScratchHit);
       if (hit && hit.distanceToSquared(origin) <= farSq) {
         this.rayCandidatesTemp.push(obstacles[i]);
       }
@@ -745,6 +753,11 @@ export class EnemyEngine {
         if (enemy.mesh.matrixWorldAutoUpdate) {
           enemy.mesh.matrixAutoUpdate = false;
           enemy.mesh.matrixWorldAutoUpdate = false;
+        } else if (mayHaveMoved) {
+          // External forces (shockwaves, punches) can still displace a frozen enemy -
+          // refresh the frozen matrix once so the rendered mesh matches the hitbox.
+          enemy.mesh.updateMatrix();
+          enemy.mesh.updateMatrixWorld(true);
         }
         continue; // AI logic paused, skip movement and attacks
       } else {
@@ -2529,6 +2542,10 @@ export class EnemyEngine {
       if (dist <= range) {
         hitAny = true;
 
+        // A punch can reach a room-frozen enemy through a doorway - unfreeze it so its
+        // (matrix-frozen) mesh follows the launched hitbox.
+        if (enemy.isRoomFrozen) this.unfreezeEnemy(enemy);
+
         // Launch vector (Forward + angled up)
         const launchDir = forwardDir.clone().normalize();
         launchDir.y = Math.max(0.20, launchDir.y + 0.30);
@@ -2572,6 +2589,9 @@ export class EnemyEngine {
       if (enemy.isDead) continue;
       const dist = enemy.position.distanceTo(center);
       if (dist < 7.0) {
+        // A shockwave can reach a room-frozen enemy through a doorway - unfreeze it so
+        // its (matrix-frozen) mesh follows the launched hitbox.
+        if (enemy.isRoomFrozen) this.unfreezeEnemy(enemy);
         enemy.hp -= 20;
         enemy.position.y += 3.5; // Launch into air for juggling!
         enemy.isStunned = true;

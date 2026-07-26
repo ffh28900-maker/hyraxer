@@ -22,6 +22,13 @@ class AudioEngineClass {
     }
   }
 
+  /** Resume an existing context (e.g. after tab switch); never creates one pre-gesture. */
+  public resume() {
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+  }
+
   public setVolumes(sound: number, music: number) {
     this.soundVol = Math.max(0, Math.min(1, sound));
     this.musicVol = Math.max(0, Math.min(1, music));

@@ -156,7 +156,8 @@ export default function App() {
     const initAudio = () => AudioEngine.init();
     window.addEventListener('pointerdown', initAudio, { once: true });
     const onVisibilityChange = () => {
-      if (!document.hidden) AudioEngine.init();
+      // Resume-only: creating a context here would be a pre-gesture autoplay violation.
+      if (!document.hidden) AudioEngine.resume();
     };
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
@@ -384,6 +385,11 @@ export default function App() {
         engine.destroy();
         gameEngineRef.current = null;
       };
+    }).catch((err) => {
+      // A failed chunk load (flaky network) or engine setup error would otherwise be a
+      // silent black screen.
+      console.error('Failed to start the game engine:', err);
+      setGameState('menu');
     });
 
     return () => {

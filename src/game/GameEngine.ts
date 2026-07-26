@@ -355,6 +355,10 @@ export class GameEngine {
       if (rooms) {
         for (const room of rooms) {
           for (const obj of room.objects) {
+            // Never reveal hidden lights: program variants are keyed on the point-light
+            // count, so compiling with all room lights visible would warm variants the
+            // budgeted runtime (8 lights) never uses - and skip the real ones.
+            if ((obj as THREE.Light).isLight) continue;
             if (!obj.visible) {
               hiddenObjects.push(obj);
               obj.visible = true;
@@ -1046,6 +1050,13 @@ export class GameEngine {
         this.player.grappleTargetPoint = null;
         AudioEngine.playGrappleRetract();
       } else {
+        // The pull drags the enemy across room boundaries while its AI (and, since the
+        // matrix-freeze optimization, its matrixWorld) is frozen - unfreeze every frame
+        // so the mesh visibly follows the hitbox, and force a room-id recompute so the
+        // freeze logic re-evaluates where the enemy actually is.
+        this.enemies.unfreezeEnemy(enemy);
+        enemy.roomId = undefined;
+
         // Stick 3D hook to enemy center
         state.currentPos.copy(enemy.position);
         state.currentPos.y += 0.5;
@@ -1469,7 +1480,9 @@ export class GameEngine {
     // PERF: cooldown-style ratios are quantised to 0.05 steps. The old 0.01 quantisation
     // was finer than one frame of cooldown decay, so the change-detection "fast path"
     // never held during combat and the whole HUD re-rendered at up to 60 Hz.
-    const q = (x: number) => Math.round(x * 20) / 20;
+    // Clamped away from 0 while the real value is positive, so READY indicators are
+    // never shown early (berserk's 25 s cooldown would otherwise read READY ~0.6 s soon).
+    const q = (x: number) => (x > 0 ? Math.max(0.05, Math.round(x * 20) / 20) : 0);
     const hvbCdRatio = q(this.player.hvbCooldown / this.player.maxHvbCd);
     const grappleCdRatio = q(this.player.grappleCooldown / this.player.maxGrappleCd);
     const roundedSkillCd = q(skillCdRatio);
@@ -1480,7 +1493,8 @@ export class GameEngine {
     const deadEnemiesCount = this.enemies ? this.enemies.deadCount : 0;
     this.killsCount = deadEnemiesCount;
     const aliveEnemiesCount = Math.max(0, this.totalEnemiesCount - deadEnemiesCount);
-    const bossHpRatio = isPlayerInBossRoom && boss ? q(boss.hp / boss.maxHp) : undefined;
+    // Boss HP keeps 1% granularity (one bar on screen; the extra updates are bounded).
+    const bossHpRatio = isPlayerInBossRoom && boss ? Math.round((boss.hp / boss.maxHp) * 100) / 100 : undefined;
 
     // PERF: field-by-field change detection against the previous snapshot - no template
     // string (16 number->string conversions) built per frame just to compare.
