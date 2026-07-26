@@ -62,6 +62,303 @@ export class ModelBuilder {
     }));
   }
 
+
+  // --- SHARED ENEMY BODY BUILDERS ---
+
+  /**
+   * Quadruped hyrax base: barrel torso, head with snout/nose/whiskers/ears/eyes/tusks,
+   * four hip-pivoted legs (named leg_FL/FR/RL/RR so EnemyEngine can swing them) and a tail.
+   * Used by the two "pack animal" mobs (dynamiter, hell bombardier).
+   */
+  private static buildHyraxQuadruped(
+    group: THREE.Group,
+    o: {
+      furMat: THREE.Material;
+      eyeMat: THREE.Material;
+      bodyR: number;
+      bodyL: number;
+      bodyY: number;
+      headR: number;
+      headZ: number;
+      legLen: number;
+      tuskMat?: THREE.Material;
+    }
+  ) {
+    const key = (n: number) => n.toFixed(3).replace('.', '_');
+
+    // Barrel torso (capsule laid along Z) + haunches
+    const bodyGeo = this.getGeo(`qbody_${key(o.bodyR)}_${key(o.bodyL)}`, () => {
+      const g = new THREE.CapsuleGeometry(o.bodyR, o.bodyL, 10, 16);
+      g.rotateX(Math.PI / 2);
+      return g;
+    });
+    const body = new THREE.Mesh(bodyGeo, o.furMat);
+    body.position.set(0, o.bodyY, 0);
+    group.add(body);
+
+    const haunchGeo = this.getGeo(`qhaunch_${key(o.bodyR)}`, () => new THREE.SphereGeometry(o.bodyR * 0.95, 12, 12));
+    const haunch = new THREE.Mesh(haunchGeo, o.furMat);
+    haunch.position.set(0, o.bodyY + o.bodyR * 0.12, -o.bodyL * 0.5);
+    haunch.scale.set(1.05, 0.95, 0.9);
+    group.add(haunch);
+
+    // Head, snout, nose
+    const headGeo = this.getGeo(`qhead_${key(o.headR)}`, () => new THREE.SphereGeometry(o.headR, 14, 14));
+    const head = new THREE.Mesh(headGeo, o.furMat);
+    head.position.set(0, o.bodyY + o.bodyR * 0.55, o.headZ);
+    group.add(head);
+
+    const snoutGeo = this.getGeo(`qsnout_${key(o.headR)}`, () => new THREE.SphereGeometry(o.headR * 0.55, 10, 10));
+    const snout = new THREE.Mesh(snoutGeo, o.furMat);
+    snout.position.set(0, o.bodyY + o.bodyR * 0.36, o.headZ + o.headR * 0.82);
+    snout.scale.set(1.15, 0.85, 1.35);
+    group.add(snout);
+
+    const noseGeo = this.getGeo('nose_045', () => new THREE.SphereGeometry(0.045, 8, 8));
+    const nose = new THREE.Mesh(noseGeo, this.getMaterial('nose_black', () => new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.1 })));
+    nose.position.set(0, o.bodyY + o.bodyR * 0.38, o.headZ + o.headR * 1.35);
+    group.add(nose);
+
+    // Eyes
+    const eyeGeo = this.getGeo('eye_007', () => new THREE.SphereGeometry(0.07, 8, 8));
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(eyeGeo, o.eyeMat);
+      eye.position.set(side * o.headR * 0.5, o.bodyY + o.bodyR * 0.72, o.headZ + o.headR * 0.78);
+      group.add(eye);
+    }
+
+    // Rodent tusks
+    if (o.tuskMat) {
+      const tuskGeo = this.getGeo('tusk_small', () => new THREE.BoxGeometry(0.055, 0.16, 0.05));
+      for (const side of [-1, 1]) {
+        const tusk = new THREE.Mesh(tuskGeo, o.tuskMat);
+        tusk.position.set(side * 0.075, o.bodyY + o.bodyR * 0.16, o.headZ + o.headR * 1.2);
+        tusk.rotation.x = 0.15;
+        group.add(tusk);
+      }
+    }
+
+    // Ears with inner lining
+    const earGeo = this.getGeo('qear_outer', () => new THREE.SphereGeometry(0.13, 10, 10));
+    const earInGeo = this.getGeo('qear_inner', () => new THREE.SphereGeometry(0.08, 8, 8));
+    const pinkMat = this.getMaterial('ear_pink', () => new THREE.MeshStandardMaterial({ color: 0xf472b6, roughness: 0.6 }));
+    for (const side of [-1, 1]) {
+      const ear = new THREE.Mesh(earGeo, o.furMat);
+      ear.position.set(side * o.headR * 0.78, o.bodyY + o.bodyR * 1.1, o.headZ - o.headR * 0.1);
+      ear.scale.set(0.55, 1.0, 0.85);
+      group.add(ear);
+
+      const inner = new THREE.Mesh(earInGeo, pinkMat);
+      inner.position.set(side * o.headR * 0.86, o.bodyY + o.bodyR * 1.08, o.headZ - o.headR * 0.05);
+      inner.scale.set(0.4, 0.9, 0.7);
+      group.add(inner);
+    }
+
+    // Whiskers
+    const whiskerGeo = this.getGeo('whisker_022', () => new THREE.CylinderGeometry(0.004, 0.002, 0.22, 4));
+    const whiskerMat = this.getMaterial('whisker_dark', () => new THREE.MeshBasicMaterial({ color: 0x1a1a1a }));
+    for (const side of [-1, 1]) {
+      for (let w = -1; w <= 1; w++) {
+        const whisker = new THREE.Mesh(whiskerGeo, whiskerMat);
+        whisker.rotation.z = Math.PI / 2 + side * 0.12;
+        whisker.rotation.x = w * 0.16;
+        whisker.position.set(side * o.headR * 0.65, o.bodyY + o.bodyR * 0.36 + w * 0.03, o.headZ + o.headR * 1.05);
+        group.add(whisker);
+      }
+    }
+
+    // Four hip-pivoted legs (the pivot Group carries the animated name)
+    const thighGeo = this.getGeo(`qthigh_${key(o.legLen)}`, () => new THREE.CapsuleGeometry(o.legLen * 0.22, o.legLen * 0.55, 6, 8));
+    const pawGeo = this.getGeo('qpaw', () => new THREE.SphereGeometry(0.11, 8, 8));
+    const clawGeo = this.getGeo('qclaw', () => new THREE.ConeGeometry(0.022, 0.09, 5));
+    const clawMat = this.getMaterial('claw_dark', () => new THREE.MeshStandardMaterial({ color: 0x1c1917, roughness: 0.35 }));
+    const legNames = [
+      ['leg_FL', -1, 1],
+      ['leg_FR', 1, 1],
+      ['leg_RL', -1, -1],
+      ['leg_RR', 1, -1],
+    ] as const;
+    for (const [name, sx, sz] of legNames) {
+      const hip = new THREE.Group();
+      hip.name = name;
+      hip.position.set(sx * o.bodyR * 0.72, o.bodyY - o.bodyR * 0.2, sz * o.bodyL * 0.34);
+      group.add(hip);
+
+      const thigh = new THREE.Mesh(thighGeo, o.furMat);
+      thigh.position.y = -o.legLen * 0.42;
+      hip.add(thigh);
+
+      const paw = new THREE.Mesh(pawGeo, o.furMat);
+      paw.position.set(0, -o.legLen * 0.85, 0.04);
+      paw.scale.set(1.1, 0.7, 1.3);
+      hip.add(paw);
+
+      for (const cx of [-0.05, 0, 0.05]) {
+        const claw = new THREE.Mesh(clawGeo, clawMat);
+        claw.position.set(cx, -o.legLen * 0.9, 0.13);
+        claw.rotation.x = Math.PI / 2.2;
+        hip.add(claw);
+      }
+    }
+
+    // Stub tail
+    const tailGeo = this.getGeo('qtail', () => new THREE.SphereGeometry(0.1, 8, 8));
+    const tail = new THREE.Mesh(tailGeo, o.furMat);
+    tail.position.set(0, o.bodyY + o.bodyR * 0.35, -o.bodyL * 0.62 - o.bodyR * 0.45);
+    tail.scale.set(0.8, 0.8, 1.2);
+    group.add(tail);
+  }
+
+  /**
+   * Bipedal armoured-guard base: plated torso, pauldrons, belt, two hip-pivoted armoured
+   * legs (leg_FL/leg_FR) and a hyrax head. Shared by the mine overseer and the hell
+   * praetorian - their silhouettes are the same, only the trim differs.
+   */
+  private static buildArmoredBiped(
+    group: THREE.Group,
+    o: {
+      furMat: THREE.Material;
+      plateMat: THREE.Material;
+      trimMat: THREE.Material;
+      eyeMat: THREE.Material;
+      spiked: boolean;
+    }
+  ) {
+    const boltMat = this.getMaterial('chrome_bolt', () => new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.1, metalness: 0.98 }));
+
+    // Torso: fur core + layered cuirass
+    const torso = new THREE.Mesh(this.getGeo('bip_torso', () => new THREE.BoxGeometry(0.74, 0.98, 0.6)), o.furMat);
+    torso.position.y = 1.05;
+    group.add(torso);
+
+    const cuirass = new THREE.Mesh(this.getGeo('bip_cuirass', () => new THREE.BoxGeometry(0.86, 0.72, 0.68)), o.plateMat);
+    cuirass.position.y = 1.16;
+    group.add(cuirass);
+
+    const skirtGeo = this.getGeo('bip_skirt', () => new THREE.BoxGeometry(0.8, 0.16, 0.64));
+    for (let i = 0; i < 3; i++) {
+      const skirt = new THREE.Mesh(skirtGeo, o.plateMat);
+      skirt.position.set(0, 0.78 - i * 0.15, 0);
+      skirt.scale.setScalar(1 - i * 0.06);
+      group.add(skirt);
+    }
+
+    const gorget = new THREE.Mesh(this.getGeo('bip_gorget', () => new THREE.CylinderGeometry(0.3, 0.36, 0.16, 12)), o.trimMat);
+    gorget.position.y = 1.56;
+    group.add(gorget);
+
+    // Rivets down the breastplate
+    const boltGeo = this.getGeo('bolt_022', () => new THREE.SphereGeometry(0.022, 8, 8));
+    for (const bx of [-0.36, 0.36]) {
+      for (const by of [0.98, 1.18, 1.38]) {
+        const rivet = new THREE.Mesh(boltGeo, boltMat);
+        rivet.position.set(bx, by, 0.35);
+        group.add(rivet);
+      }
+    }
+
+    // Pauldrons (+ optional spikes)
+    const pauldronGeo = this.getGeo('bip_pauldron', () => new THREE.SphereGeometry(0.26, 12, 10, 0, Math.PI * 2, 0, Math.PI / 1.7));
+    const spikeGeo = this.getGeo('bip_spike', () => new THREE.ConeGeometry(0.05, 0.24, 6));
+    for (const side of [-1, 1]) {
+      const pauldron = new THREE.Mesh(pauldronGeo, o.plateMat);
+      pauldron.position.set(side * 0.48, 1.46, 0);
+      pauldron.rotation.z = side * 0.35;
+      group.add(pauldron);
+
+      const band = new THREE.Mesh(this.getGeo('bip_pauldron_band', () => new THREE.TorusGeometry(0.24, 0.03, 6, 14)), o.trimMat);
+      band.position.set(side * 0.48, 1.4, 0);
+      band.rotation.x = Math.PI / 2;
+      group.add(band);
+
+      if (o.spiked) {
+        for (const sz of [-0.1, 0.1]) {
+          const spike = new THREE.Mesh(spikeGeo, o.trimMat);
+          spike.position.set(side * 0.56, 1.62, sz);
+          spike.rotation.z = side * 0.5;
+          group.add(spike);
+        }
+      }
+    }
+
+    // Belt with buckle
+    const belt = new THREE.Mesh(this.getGeo('bip_belt', () => new THREE.BoxGeometry(0.88, 0.14, 0.7)), o.trimMat);
+    belt.position.y = 0.86;
+    group.add(belt);
+    const buckle = new THREE.Mesh(this.getGeo('bip_buckle', () => new THREE.BoxGeometry(0.18, 0.16, 0.06)), boltMat);
+    buckle.position.set(0, 0.86, 0.37);
+    group.add(buckle);
+
+    // Armoured legs on hip pivots
+    const thighGeo = this.getGeo('bip_thigh', () => new THREE.CapsuleGeometry(0.15, 0.34, 6, 8));
+    const greaveGeo = this.getGeo('bip_greave', () => new THREE.BoxGeometry(0.26, 0.34, 0.26));
+    const kneeGeo = this.getGeo('bip_knee', () => new THREE.SphereGeometry(0.14, 10, 8));
+    const bootGeo = this.getGeo('bip_boot', () => new THREE.BoxGeometry(0.3, 0.14, 0.44));
+    for (const [name, sx] of [['leg_FL', -1], ['leg_FR', 1]] as const) {
+      const hip = new THREE.Group();
+      hip.name = name;
+      hip.position.set(sx * 0.22, 0.74, 0);
+      group.add(hip);
+
+      const thigh = new THREE.Mesh(thighGeo, o.furMat);
+      thigh.position.y = -0.2;
+      hip.add(thigh);
+
+      const knee = new THREE.Mesh(kneeGeo, o.plateMat);
+      knee.position.y = -0.4;
+      hip.add(knee);
+
+      const greave = new THREE.Mesh(greaveGeo, o.plateMat);
+      greave.position.y = -0.56;
+      hip.add(greave);
+
+      const boot = new THREE.Mesh(bootGeo, o.trimMat);
+      boot.position.set(0, -0.72, 0.07);
+      hip.add(boot);
+    }
+
+    // Head (hyrax muzzle stays visible under the helm added by callers)
+    const head = new THREE.Mesh(this.getGeo('bip_head', () => new THREE.SphereGeometry(0.31, 14, 14)), o.furMat);
+    head.position.set(0, 1.78, 0.06);
+    group.add(head);
+
+    const muzzle = new THREE.Mesh(this.getGeo('bip_muzzle', () => new THREE.SphereGeometry(0.17, 10, 10)), o.furMat);
+    muzzle.position.set(0, 1.68, 0.3);
+    muzzle.scale.set(1.1, 0.8, 1.3);
+    group.add(muzzle);
+
+    const nose = new THREE.Mesh(this.getGeo('nose_045', () => new THREE.SphereGeometry(0.045, 8, 8)), this.getMaterial('nose_black', () => new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.1 })));
+    nose.position.set(0, 1.7, 0.45);
+    group.add(nose);
+
+    const eyeGeo = this.getGeo('eye_006', () => new THREE.SphereGeometry(0.06, 8, 8));
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(eyeGeo, o.eyeMat);
+      eye.position.set(side * 0.13, 1.83, 0.26);
+      group.add(eye);
+    }
+
+    // Arms: shoulder -> upper -> forearm -> gauntlet. Callers attach weapons at the hands.
+    const upperGeo = this.getGeo('bip_upperarm', () => new THREE.CapsuleGeometry(0.11, 0.26, 6, 8));
+    const foreGeo = this.getGeo('bip_forearm', () => new THREE.BoxGeometry(0.2, 0.34, 0.2));
+    const fistGeo = this.getGeo('bip_fist', () => new THREE.SphereGeometry(0.13, 10, 8));
+    for (const side of [-1, 1]) {
+      const upper = new THREE.Mesh(upperGeo, o.furMat);
+      upper.position.set(side * 0.5, 1.22, 0.02);
+      upper.rotation.z = side * 0.16;
+      group.add(upper);
+
+      const fore = new THREE.Mesh(foreGeo, o.plateMat);
+      fore.position.set(side * 0.56, 0.94, 0.14);
+      fore.rotation.x = -0.3;
+      group.add(fore);
+
+      const fist = new THREE.Mesh(fistGeo, o.trimMat);
+      fist.position.set(side * 0.58, 0.78, 0.3);
+      group.add(fist);
+    }
+  }
+
   // --- ENEMY 3D MODELS ---
 
   public static createEnemyMesh(type: EnemyType): THREE.Group {
@@ -1742,243 +2039,783 @@ export class ModelBuilder {
 
       // --- CHAPTER 3: MOBS 9-12 ---
       case 'doman_miner': {
-        // ШАХТЁР-НАДЗИРАТЕЛЬ: Armored hyrax guard with miner hardhat, glowing headlamp, pickaxe & heavy shield
-        const bodyGeo = this.getGeo('box_0.82_1.05_0.68', () => new THREE.BoxGeometry(0.82, 1.05, 0.68));
-        const body = new THREE.Mesh(bodyGeo, stdFurMat);
-        body.position.y = 0.8;
-        group.add(body);
+        // ШАХТЁР-НАДЗИРАТЕЛЬ: armoured mine warden - plate cuirass, miner hardhat with a
+        // burning headlamp, heavy pickaxe and a riveted tower shield.
+        const plateMat = this.getMaterial('mine_plate_steel', () => new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.9, roughness: 0.3 }));
+        const trimMat = this.getMaterial('mine_plate_dark', () => new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.85, roughness: 0.35 }));
+        const amberMat = this.getMaterial('amber_helmet', () => new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.65, roughness: 0.25 }));
+        const lampMat = this.getMaterial('headlamp_yellow', () => new THREE.MeshBasicMaterial({ color: 0xfef08a }));
+        const woodMat = this.getMaterial('solid_wood_handle', () => new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.8 }));
+        const eyeMat = this.getMaterial('eye_dark_shine', () => new THREE.MeshStandardMaterial({ color: 0x0c0a09, roughness: 0.08 }));
 
-        // Steel Plate Cuirass & Shoulder Armor + Rivets
-        const chestGeo = this.getGeo('box_0.88_0.68_0.72', () => new THREE.BoxGeometry(0.88, 0.68, 0.72));
-        const chest = new THREE.Mesh(chestGeo, metalMat);
-        chest.position.set(0, 0.85, 0);
-        group.add(chest);
+        this.buildArmoredBiped(group, { furMat: stdFurMat, plateMat, trimMat, eyeMat, spiked: false });
 
-        const boltGeo = this.getGeo('sph_0.02_8_8', () => new THREE.SphereGeometry(0.02, 8, 8));
-        for (const bx of [-0.36, 0.36]) {
-          for (const by of [0.65, 0.95]) {
-            const rivet = new THREE.Mesh(boltGeo, boltMat);
-            rivet.position.set(bx, by, 0.37);
-            group.add(rivet);
+        // Miner hardhat: dome, wide brim, ridge and the lamp assembly
+        const helmet = new THREE.Mesh(this.getGeo('miner_helm_dome', () => new THREE.SphereGeometry(0.34, 14, 10, 0, Math.PI * 2, 0, Math.PI / 1.9)), amberMat);
+        helmet.position.set(0, 1.86, 0.06);
+        group.add(helmet);
+
+        const brim = new THREE.Mesh(this.getGeo('miner_helm_brim', () => new THREE.CylinderGeometry(0.42, 0.42, 0.045, 16)), amberMat);
+        brim.position.set(0, 1.84, 0.06);
+        group.add(brim);
+
+        const ridge = new THREE.Mesh(this.getGeo('miner_helm_ridge', () => new THREE.BoxGeometry(0.06, 0.1, 0.6)), trimMat);
+        ridge.position.set(0, 2.02, 0.06);
+        group.add(ridge);
+
+        const lampBracket = new THREE.Mesh(this.getGeo('miner_lamp_bracket', () => new THREE.BoxGeometry(0.14, 0.1, 0.06)), trimMat);
+        lampBracket.position.set(0, 1.94, 0.32);
+        group.add(lampBracket);
+
+        const lampHousing = new THREE.Mesh(this.getGeo('miner_lamp_housing', () => new THREE.CylinderGeometry(0.11, 0.13, 0.12, 14)), boltMat);
+        lampHousing.rotation.x = Math.PI / 2;
+        lampHousing.position.set(0, 1.94, 0.42);
+        group.add(lampHousing);
+
+        const lampLens = new THREE.Mesh(this.getGeo('miner_lamp_lens', () => new THREE.CylinderGeometry(0.095, 0.095, 0.04, 14)), lampMat);
+        lampLens.rotation.x = Math.PI / 2;
+        lampLens.position.set(0, 1.94, 0.49);
+        group.add(lampLens);
+
+        // Ears poking out under the brim
+        const earGeo = this.getGeo('miner_ear', () => new THREE.SphereGeometry(0.1, 8, 8));
+        for (const side of [-1, 1]) {
+          const ear = new THREE.Mesh(earGeo, stdFurMat);
+          ear.position.set(side * 0.29, 1.76, 0.0);
+          ear.scale.set(0.5, 0.95, 0.8);
+          group.add(ear);
+        }
+
+        // Heavy pickaxe in the right hand
+        const pickGroup = new THREE.Group();
+        pickGroup.position.set(0.62, 1.0, 0.24);
+        pickGroup.rotation.set(-0.5, 0, -0.25);
+        group.add(pickGroup);
+
+        const handle = new THREE.Mesh(this.getGeo('pick_handle', () => new THREE.CylinderGeometry(0.038, 0.045, 1.3, 8)), woodMat);
+        pickGroup.add(handle);
+
+        const grip = new THREE.Mesh(this.getGeo('pick_grip', () => new THREE.CylinderGeometry(0.05, 0.05, 0.22, 8)), trimMat);
+        grip.position.y = -0.5;
+        pickGroup.add(grip);
+
+        const collar = new THREE.Mesh(this.getGeo('pick_collar', () => new THREE.CylinderGeometry(0.06, 0.06, 0.1, 10)), metalMat);
+        collar.position.y = 0.6;
+        pickGroup.add(collar);
+
+        const pickSpike = new THREE.Mesh(this.getGeo('pick_spike', () => new THREE.ConeGeometry(0.07, 0.6, 8)), metalMat);
+        pickSpike.rotation.z = Math.PI / 2;
+        pickSpike.position.set(0.34, 0.66, 0);
+        pickGroup.add(pickSpike);
+
+        const pickBlade = new THREE.Mesh(this.getGeo('pick_blade', () => new THREE.BoxGeometry(0.34, 0.12, 0.07)), metalMat);
+        pickBlade.position.set(-0.2, 0.66, 0);
+        pickGroup.add(pickBlade);
+
+        // Riveted tower shield in the left hand
+        const shieldGroup = new THREE.Group();
+        shieldGroup.position.set(-0.66, 1.0, 0.4);
+        shieldGroup.rotation.y = 0.22;
+        group.add(shieldGroup);
+
+        const shieldPlank = new THREE.Mesh(this.getGeo('shield_plank', () => new THREE.BoxGeometry(0.82, 1.28, 0.1)), woodMat);
+        shieldGroup.add(shieldPlank);
+
+        const frameHGeo = this.getGeo('shield_frame_h', () => new THREE.BoxGeometry(0.86, 0.09, 0.13));
+        const frameVGeo = this.getGeo('shield_frame_v', () => new THREE.BoxGeometry(0.09, 1.32, 0.13));
+        for (const fy of [-0.6, 0.6]) {
+          const bar = new THREE.Mesh(frameHGeo, metalMat);
+          bar.position.set(0, fy, 0);
+          shieldGroup.add(bar);
+        }
+        for (const fx of [-0.37, 0.37]) {
+          const bar = new THREE.Mesh(frameVGeo, metalMat);
+          bar.position.set(fx, 0, 0);
+          shieldGroup.add(bar);
+        }
+
+        const hazardBand = new THREE.Mesh(this.getGeo('shield_hazard', () => new THREE.BoxGeometry(0.8, 0.16, 0.12)), hazardMat);
+        hazardBand.position.set(0, 0.24, 0);
+        shieldGroup.add(hazardBand);
+
+        const shieldBoss = new THREE.Mesh(this.getGeo('shield_boss', () => new THREE.SphereGeometry(0.15, 12, 10, 0, Math.PI * 2, 0, Math.PI / 2)), metalMat);
+        shieldBoss.rotation.x = -Math.PI / 2;
+        shieldBoss.position.set(0, -0.12, 0.08);
+        shieldGroup.add(shieldBoss);
+
+        const shieldRivetGeo = this.getGeo('bolt_022', () => new THREE.SphereGeometry(0.022, 8, 8));
+        for (const rx of [-0.37, 0.37]) {
+          for (const ry of [-0.45, -0.15, 0.15, 0.45]) {
+            const rivet = new THREE.Mesh(shieldRivetGeo, boltMat);
+            rivet.position.set(rx, ry, 0.08);
+            shieldGroup.add(rivet);
           }
         }
 
-        // Head with Miner Hardhat & Bright Headlamp Spotlight
-        const headGeo = this.getGeo('sph_0.34_14_14', () => new THREE.SphereGeometry(0.34, 14, 14));
-        const head = new THREE.Mesh(headGeo, stdFurMat);
-        head.position.set(0, 1.35, 0.12);
-        group.add(head);
+        const shieldLamp = new THREE.Mesh(this.getGeo('shield_lamp', () => new THREE.SphereGeometry(0.05, 8, 8)), lampMat);
+        shieldLamp.position.set(0, 0.55, 0.09);
+        shieldGroup.add(shieldLamp);
 
-        const helmetGeo = this.getGeo('cyl_0.38_0.42_0.3_16', () => new THREE.CylinderGeometry(0.38, 0.42, 0.3, 16));
-        const helmetMat = this.getMaterial('amber_helmet', () => new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.65, roughness: 0.25 }));
-        const helmet = new THREE.Mesh(helmetGeo, helmetMat);
-        helmet.position.set(0, 1.54, 0.12);
-        group.add(helmet);
-
-        const lampGeo = this.getGeo('cyl_0.095_0.095_0.1_12', () => new THREE.CylinderGeometry(0.095, 0.095, 0.1, 12));
-        const lampMat = this.getMaterial('headlamp_yellow', () => new THREE.MeshBasicMaterial({ color: 0xfef08a }));
-        const lamp = new THREE.Mesh(lampGeo, lampMat);
-        lamp.rotation.x = Math.PI / 2;
-        lamp.position.set(0, 1.54, 0.48);
-        group.add(lamp);
-
-        // Heavy Pickaxe in Right Hand
-        const handleGeo = this.getGeo('cyl_0.038_0.038_1.25_8', () => new THREE.CylinderGeometry(0.038, 0.038, 1.25, 8));
-        const woodMat = this.getMaterial('solid_wood_handle', () => new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.8 }));
-        const handle = new THREE.Mesh(handleGeo, woodMat);
-        handle.position.set(0.58, 0.9, 0.25);
-        handle.rotation.x = -Math.PI / 4;
-        group.add(handle);
-
-        const pickHeadGeo = this.getGeo('cone_0.075_0.75_8', () => new THREE.ConeGeometry(0.075, 0.75, 8));
-        const pickHead = new THREE.Mesh(pickHeadGeo, metalMat);
-        pickHead.rotation.z = Math.PI / 2;
-        pickHead.position.set(0.58, 1.34, 0.54);
-        group.add(pickHead);
-
-        // Tower Shield in Left Hand
-        const shieldGeo = this.getGeo('box_0.88_1.2_0.14', () => new THREE.BoxGeometry(0.88, 1.2, 0.14));
-        const shield = new THREE.Mesh(shieldGeo, hazardMat);
-        shield.position.set(-0.58, 0.9, 0.44);
-        group.add(shield);
-        break;
-      }
-
-      case 'doman_dynamiter': {
-        // ГРЕМУЧИЙ ДОМАН: Hyrax with strapped dynamite bundles & burning fuse sparks
-        const bodyGeo = this.getGeo('cap_0.42_0.72_12_16', () => {
-          const g = new THREE.CapsuleGeometry(0.42, 0.72, 12, 16);
-          g.rotateX(Math.PI / 2);
-          return g;
-        });
-        const body = new THREE.Mesh(bodyGeo, stdFurMat);
-        body.position.y = 0.55;
-        group.add(body);
-
-        const headGeo = this.getGeo('sph_0.34_14_14', () => new THREE.SphereGeometry(0.34, 14, 14));
-        const head = new THREE.Mesh(headGeo, stdFurMat);
-        head.position.set(0, 0.75, 0.45);
-        group.add(head);
-
-        // Red Dynamite Packs on Back
-        const tntGeo = this.getGeo('cyl_0.125_0.125_0.7_12', () => new THREE.CylinderGeometry(0.125, 0.125, 0.7, 12));
-        const tntMat = this.getMaterial('red_tnt_solid', () => new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.3 }));
-        for (let b = -1; b <= 1; b++) {
-          const tnt = new THREE.Mesh(tntGeo, tntMat);
-          tnt.rotation.x = Math.PI / 2;
-          tnt.position.set(b * 0.17, 0.98, -0.1);
-          group.add(tnt);
+        // Tool pouches on the belt
+        const pouchGeo = this.getGeo('miner_pouch', () => new THREE.BoxGeometry(0.16, 0.2, 0.12));
+        const leatherMat = this.getMaterial('leather_strap', () => new THREE.MeshStandardMaterial({ color: 0x44281a, roughness: 0.85 }));
+        for (const px of [-0.3, 0.28]) {
+          const pouch = new THREE.Mesh(pouchGeo, leatherMat);
+          pouch.position.set(px, 0.74, 0.34);
+          group.add(pouch);
         }
         break;
       }
 
+
+      case 'doman_dynamiter': {
+        // ГРЕМУЧИЙ ДОМАН: pack-animal hyrax carrying a strapped dynamite bundle with a
+        // burning fuse, plus scavenged fuel canisters.
+        const eyeMat = this.getMaterial('eye_dark_shine', () => new THREE.MeshStandardMaterial({ color: 0x0c0a09, roughness: 0.08 }));
+        const tuskMat = this.getMaterial('tusk_ivory', () => new THREE.MeshStandardMaterial({ color: 0xf5f5dc, roughness: 0.35 }));
+
+        this.buildHyraxQuadruped(group, {
+          furMat: stdFurMat,
+          eyeMat,
+          bodyR: 0.42,
+          bodyL: 0.78,
+          bodyY: 0.72,
+          headR: 0.3,
+          headZ: 0.68,
+          legLen: 0.62,
+          tuskMat,
+        });
+
+        const tntMat = this.getMaterial('tnt_red_stick', () => new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.55 }));
+        const capMat = this.getMaterial('tnt_cap_dark', () => new THREE.MeshStandardMaterial({ color: 0x1c1917, roughness: 0.5 }));
+        const fuseMat = this.getMaterial('fuse_cord', () => new THREE.MeshStandardMaterial({ color: 0x6b7280, roughness: 0.8 }));
+        const sparkMat = this.getMaterial('fuse_spark', () => new THREE.MeshBasicMaterial({ color: 0xfbbf24 }));
+        const leatherMat = this.getMaterial('leather_strap', () => new THREE.MeshStandardMaterial({ color: 0x44281a, roughness: 0.85 }));
+        const woodMat = this.getMaterial('solid_wood_handle', () => new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.8 }));
+
+        // Wooden pack frame
+        const frameGeo = this.getGeo('dyn_frame', () => new THREE.BoxGeometry(0.5, 0.06, 0.62));
+        const frame = new THREE.Mesh(frameGeo, woodMat);
+        frame.position.set(0, 1.06, -0.04);
+        group.add(frame);
+
+        // Two rows of four dynamite sticks
+        const stickGeo = this.getGeo('dyn_stick', () => new THREE.CylinderGeometry(0.075, 0.075, 0.46, 10));
+        const capGeo = this.getGeo('dyn_stick_cap', () => new THREE.CylinderGeometry(0.078, 0.078, 0.04, 10));
+        const fuseGeo = this.getGeo('dyn_fuse', () => new THREE.CylinderGeometry(0.012, 0.012, 0.18, 5));
+        for (let row = 0; row < 2; row++) {
+          for (let i = 0; i < 4; i++) {
+            const sx = -0.24 + i * 0.16;
+            const sy = 1.2 + row * 0.15;
+            const sz = -0.06 + row * 0.06;
+
+            const stick = new THREE.Mesh(stickGeo, tntMat);
+            stick.position.set(sx, sy, sz);
+            group.add(stick);
+
+            for (const cy of [-0.23, 0.23]) {
+              const cap = new THREE.Mesh(capGeo, capMat);
+              cap.position.set(sx, sy + cy, sz);
+              group.add(cap);
+            }
+
+            const fuse = new THREE.Mesh(fuseGeo, fuseMat);
+            fuse.position.set(sx, sy + 0.32, sz);
+            fuse.rotation.z = (i - 1.5) * 0.12;
+            group.add(fuse);
+          }
+        }
+
+        // The one lit fuse: spark bead + flame tip
+        const spark = new THREE.Mesh(this.getGeo('dyn_spark', () => new THREE.SphereGeometry(0.055, 8, 8)), sparkMat);
+        spark.position.set(0.24, 1.72, 0.0);
+        group.add(spark);
+        const flame = new THREE.Mesh(this.getGeo('dyn_flame', () => new THREE.ConeGeometry(0.05, 0.16, 7)), sparkMat);
+        flame.position.set(0.24, 1.82, 0.0);
+        group.add(flame);
+
+        // Leather harness straps around the barrel
+        const strapGeo = this.getGeo('dyn_strap', () => new THREE.TorusGeometry(0.44, 0.035, 6, 16));
+        for (const sz of [-0.2, 0.22]) {
+          const strap = new THREE.Mesh(strapGeo, leatherMat);
+          strap.position.set(0, 0.72, sz);
+          strap.rotation.y = Math.PI / 2;
+          group.add(strap);
+        }
+
+        // Scavenged fuel canister slung on the flank
+        const canMat = this.getMaterial('fuel_canister', () => new THREE.MeshStandardMaterial({ color: 0x4d7c0f, metalness: 0.55, roughness: 0.4 }));
+        const canister = new THREE.Mesh(this.getGeo('dyn_canister', () => new THREE.CylinderGeometry(0.11, 0.11, 0.34, 12)), canMat);
+        canister.position.set(-0.46, 0.78, -0.2);
+        canister.rotation.z = 0.3;
+        group.add(canister);
+        const valve = new THREE.Mesh(this.getGeo('dyn_valve', () => new THREE.CylinderGeometry(0.04, 0.04, 0.08, 8)), metalMat);
+        valve.position.set(-0.52, 0.95, -0.2);
+        valve.rotation.z = 0.3;
+        group.add(valve);
+
+        // A single stick clenched in the jaws, fuse already burning
+        const held = new THREE.Mesh(stickGeo, tntMat);
+        held.rotation.z = Math.PI / 2;
+        held.position.set(0.16, 0.86, 1.02);
+        group.add(held);
+        const heldSpark = new THREE.Mesh(this.getGeo('dyn_spark', () => new THREE.SphereGeometry(0.055, 8, 8)), sparkMat);
+        heldSpark.position.set(0.44, 0.86, 1.02);
+        group.add(heldSpark);
+        break;
+      }
+
+
       case 'doman_archer': {
-        // ГЕОЛОГИЧЕСКИЙ ПАРАЗИТ: Living Crystal Golem made of rock & glowing lime crystal clusters
+        // ГЕОЛОГИЧЕСКИЙ ПАРАЗИТ: animated crystal parasite - a rubble golem shot through
+        // with glowing lime crystal clusters, wrapped in a faint gas haze.
+        const rockMat = this.getMaterial('solid_slate_rock', () => new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.9 }));
+        const rockLightMat = this.getMaterial('rock_light_grey', () => new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.95 }));
         const crystalMat = this.getMaterial('solid_lime_crystal', () => new THREE.MeshStandardMaterial({
           color: 0x84cc16,
           emissive: 0x84cc16,
           emissiveIntensity: 1.1,
           roughness: 0.12,
         }));
-        const rockMat = this.getMaterial('solid_slate_rock', () => new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.9 }));
+        const coreMat = this.getMaterial('crystal_core_bright', () => new THREE.MeshBasicMaterial({ color: 0xbef264 }));
+        const hazeMat = this.getMaterial('crystal_gas_haze', () => new THREE.MeshBasicMaterial({
+          color: 0x84cc16,
+          transparent: true,
+          opacity: 0.09,
+          depthWrite: false,
+        }));
 
-        const torsoGeo = this.getGeo('dodec_0.68_1', () => new THREE.DodecahedronGeometry(0.68, 1));
-        const torso = new THREE.Mesh(torsoGeo, rockMat);
-        torso.position.y = 0.95;
-        group.add(torso);
+        // Rubble torso: three stacked irregular chunks
+        const chunkBigGeo = this.getGeo('rock_chunk_big', () => new THREE.DodecahedronGeometry(0.46, 0));
+        const chunkMidGeo = this.getGeo('rock_chunk_mid', () => new THREE.DodecahedronGeometry(0.3, 0));
+        const chunkSmallGeo = this.getGeo('rock_chunk_small', () => new THREE.IcosahedronGeometry(0.16, 0));
 
-        const coreGeo = this.getGeo('octa_0.35_1', () => new THREE.OctahedronGeometry(0.35, 1));
-        const core = new THREE.Mesh(coreGeo, crystalMat);
-        core.position.set(0, 1.0, 0.4);
+        const hips = new THREE.Mesh(chunkBigGeo, rockMat);
+        hips.position.set(0, 0.82, 0);
+        hips.scale.set(1.15, 0.85, 1.0);
+        group.add(hips);
+
+        const chest = new THREE.Mesh(chunkBigGeo, rockLightMat);
+        chest.position.set(0, 1.4, 0.02);
+        chest.scale.set(1.25, 1.05, 1.1);
+        chest.rotation.y = 0.6;
+        group.add(chest);
+
+        const shoulderRock = new THREE.Mesh(chunkMidGeo, rockMat);
+        shoulderRock.position.set(0, 1.82, -0.04);
+        shoulderRock.scale.set(1.5, 0.7, 1.1);
+        group.add(shoulderRock);
+
+        // Head chunk with crystal eyes
+        const head = new THREE.Mesh(chunkMidGeo, rockLightMat);
+        head.position.set(0, 2.12, 0.06);
+        head.scale.set(0.95, 0.9, 0.95);
+        head.rotation.set(0.3, 0.8, 0.1);
+        group.add(head);
+
+        const eyeGeo = this.getGeo('crystal_eye', () => new THREE.OctahedronGeometry(0.06, 0));
+        for (const side of [-1, 1]) {
+          const eye = new THREE.Mesh(eyeGeo, coreMat);
+          eye.position.set(side * 0.12, 2.16, 0.26);
+          group.add(eye);
+        }
+
+        // Glowing core in the chest cavity + containment shards
+        const core = new THREE.Mesh(this.getGeo('crystal_core', () => new THREE.OctahedronGeometry(0.2, 1)), coreMat);
+        core.position.set(0, 1.42, 0.34);
         group.add(core);
 
-        const spikeGeo = this.getGeo('cone_0.12_0.55_8', () => new THREE.ConeGeometry(0.12, 0.55, 8));
-        for (let i = 0; i < 9; i++) {
-          const spike = new THREE.Mesh(spikeGeo, crystalMat);
-          const angle = (i / 9) * Math.PI * 2;
-          spike.position.set(Math.cos(angle) * 0.5, 1.18 + Math.sin(angle) * 0.22, -0.12);
-          spike.rotation.z = Math.cos(angle);
-          group.add(spike);
+        const shardGeo = this.getGeo('crystal_shard_small', () => new THREE.ConeGeometry(0.055, 0.2, 6));
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          const shard = new THREE.Mesh(shardGeo, crystalMat);
+          shard.position.set(Math.cos(a) * 0.26, 1.42 + Math.sin(a) * 0.24, 0.3);
+          shard.rotation.z = -a;
+          group.add(shard);
+        }
+
+        // Back cluster: tall crystal spires
+        const spireGeo = this.getGeo('crystal_spire', () => new THREE.ConeGeometry(0.11, 0.72, 6));
+        for (let i = 0; i < 7; i++) {
+          const spire = new THREE.Mesh(spireGeo, crystalMat);
+          const a = (i / 7) * Math.PI * 2;
+          spire.position.set(Math.cos(a) * 0.34, 1.75 + (i % 3) * 0.16, -0.3 + Math.sin(a) * 0.12);
+          spire.rotation.set(-0.5 + (i % 2) * 0.3, 0, Math.cos(a) * 0.6);
+          spire.scale.setScalar(0.75 + (i % 3) * 0.25);
+          group.add(spire);
+        }
+
+        // Arms: chunk chain ending in a boulder fist, crystal growths on the shoulders
+        for (const side of [-1, 1]) {
+          const shoulder = new THREE.Mesh(chunkMidGeo, rockMat);
+          shoulder.position.set(side * 0.55, 1.66, 0);
+          shoulder.scale.setScalar(0.85);
+          group.add(shoulder);
+
+          const upper = new THREE.Mesh(chunkMidGeo, rockLightMat);
+          upper.position.set(side * 0.66, 1.28, 0.05);
+          upper.scale.set(0.6, 0.85, 0.6);
+          group.add(upper);
+
+          const fist = new THREE.Mesh(chunkMidGeo, rockMat);
+          fist.position.set(side * 0.72, 0.9, 0.16);
+          fist.scale.setScalar(0.95);
+          group.add(fist);
+
+          for (let k = 0; k < 3; k++) {
+            const growth = new THREE.Mesh(shardGeo, crystalMat);
+            growth.position.set(side * (0.6 + k * 0.06), 1.72 + k * 0.1, 0.1 - k * 0.12);
+            growth.rotation.z = side * (0.6 + k * 0.3);
+            group.add(growth);
+          }
+        }
+
+        // Legs on hip pivots so the golem lumbers when it walks
+        for (const [name, sx] of [['leg_FL', -1], ['leg_FR', 1]] as const) {
+          const hip = new THREE.Group();
+          hip.name = name;
+          hip.position.set(sx * 0.26, 0.74, 0);
+          group.add(hip);
+
+          const thigh = new THREE.Mesh(chunkMidGeo, rockMat);
+          thigh.position.y = -0.22;
+          thigh.scale.set(0.8, 0.95, 0.8);
+          hip.add(thigh);
+
+          const shin = new THREE.Mesh(chunkMidGeo, rockLightMat);
+          shin.position.y = -0.5;
+          shin.scale.set(0.65, 0.8, 0.65);
+          hip.add(shin);
+
+          const foot = new THREE.Mesh(chunkSmallGeo, rockMat);
+          foot.position.set(0, -0.7, 0.1);
+          foot.scale.set(1.4, 0.7, 1.6);
+          hip.add(foot);
+
+          const kneeCrystal = new THREE.Mesh(shardGeo, crystalMat);
+          kneeCrystal.position.set(sx * 0.14, -0.34, 0.14);
+          kneeCrystal.rotation.x = -0.9;
+          hip.add(kneeCrystal);
+        }
+
+        // Loose rubble around the feet
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2;
+          const rubble = new THREE.Mesh(chunkSmallGeo, rockLightMat);
+          rubble.position.set(Math.cos(a) * 0.5, 0.12, Math.sin(a) * 0.42);
+          rubble.scale.setScalar(0.5 + (i % 3) * 0.2);
+          rubble.rotation.set(i, i * 0.7, i * 0.3);
+          group.add(rubble);
+        }
+
+        // Faint drug-gas haze it hides inside
+        const hazeGeo = this.getGeo('crystal_haze', () => new THREE.SphereGeometry(0.62, 10, 8));
+        for (const [hy, hs] of [[0.7, 1.0], [1.35, 0.85]] as const) {
+          const haze = new THREE.Mesh(hazeGeo, hazeMat);
+          haze.position.set(0, hy, 0);
+          haze.scale.setScalar(hs);
+          group.add(haze);
         }
         break;
       }
 
+
       // --- CHAPTER 4: MOBS 13-16 ---
       case 'imp_doman': {
-        // АДСКИЙ ПРЕТОРИАНЕЦ: Demon warrior commander with flaming sword, skull shield, horned helm
-        const bodyGeo = this.getGeo('box_0.92_1.28_0.72', () => new THREE.BoxGeometry(0.92, 1.28, 0.72));
-        const body = new THREE.Mesh(bodyGeo, darkFurMat);
-        body.position.y = 0.95;
-        group.add(body);
-
+        // АДСКИЙ ПРЕТОРИАНЕЦ: heavy legion commander - blackened spiked plate, horned helm,
+        // burning sword and a bone-crested shield.
         const demonArmorMat = this.getMaterial('demon_armor_solid', () => new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.25, metalness: 0.85 }));
-        const chestGeo = this.getGeo('box_0.98_0.88_0.78', () => new THREE.BoxGeometry(0.98, 0.88, 0.78));
-        const chest = new THREE.Mesh(chestGeo, demonArmorMat);
-        chest.position.y = 1.0;
-        group.add(chest);
-
-        const helmGeo = this.getGeo('box_0.58_0.58_0.58', () => new THREE.BoxGeometry(0.58, 0.58, 0.58));
-        const helm = new THREE.Mesh(helmGeo, demonArmorMat);
-        helm.position.set(0, 1.68, 0.1);
-        group.add(helm);
-
-        // Horns
-        const hornGeo = this.getGeo('cone_0.095_0.6_8', () => new THREE.ConeGeometry(0.095, 0.6, 8));
-        const hornMat = this.getMaterial('obsidian_horn', () => new THREE.MeshStandardMaterial({ color: 0x09090b, roughness: 0.2 }));
-        for (const side of [-1, 1]) {
-          const horn = new THREE.Mesh(hornGeo, hornMat);
-          horn.position.set(side * 0.36, 1.98, 0.1);
-          horn.rotation.z = -side * 0.45;
-          group.add(horn);
-        }
-
-        // Flaming Sword
-        const bladeGeo = this.getGeo('box_0.095_1.55_0.22', () => new THREE.BoxGeometry(0.095, 1.55, 0.22));
-        const bladeMat = this.getMaterial('flame_blade_mat', () => new THREE.MeshStandardMaterial({
+        const obsidianMat = this.getMaterial('obsidian_horn', () => new THREE.MeshStandardMaterial({ color: 0x09090b, roughness: 0.2 }));
+        const emberEyeMat = this.getMaterial('ember_eye_glow', () => new THREE.MeshBasicMaterial({ color: 0xff2200 }));
+        const boneMat = this.getMaterial('bone_pale', () => new THREE.MeshStandardMaterial({ color: 0xe7e5e4, roughness: 0.7 }));
+        const flameMat = this.getMaterial('flame_blade_mat', () => new THREE.MeshStandardMaterial({
           color: 0xef4444,
           emissive: 0xff2200,
           emissiveIntensity: 1.4,
         }));
-        const blade = new THREE.Mesh(bladeGeo, bladeMat);
-        blade.position.set(0.68, 1.18, 0.48);
-        blade.rotation.x = Math.PI / 6;
-        group.add(blade);
+        const flameWispMat = this.getMaterial('flame_wisp', () => new THREE.MeshBasicMaterial({ color: 0xff7a18 }));
 
-        // PERF: no per-enemy PointLight. Every imp light escaped SceneCuller's fixed
-        // 8-light budget (the culler only collects lights present at level load), so each
-        // imp death changed NUM_POINT_LIGHTS and forced three.js to recompile every
-        // material's shader mid-fight. The emissive blade already reads as fire.
+        this.buildArmoredBiped(group, {
+          furMat: darkFurMat,
+          plateMat: demonArmorMat,
+          trimMat: obsidianMat,
+          eyeMat: emberEyeMat,
+          spiked: true,
+        });
 
-        // Skull Shield
-        const shieldGeo = this.getGeo('box_0.82_1.15_0.14', () => new THREE.BoxGeometry(0.82, 1.15, 0.14));
-        const shield = new THREE.Mesh(shieldGeo, demonArmorMat);
-        shield.position.set(-0.62, 0.95, 0.48);
-        group.add(shield);
+        // Horned helm with a glowing visor slit
+        const helm = new THREE.Mesh(this.getGeo('imp_helm', () => new THREE.BoxGeometry(0.56, 0.5, 0.56)), demonArmorMat);
+        helm.position.set(0, 1.9, 0.04);
+        group.add(helm);
+
+        const faceplate = new THREE.Mesh(this.getGeo('imp_faceplate', () => new THREE.BoxGeometry(0.42, 0.3, 0.12)), obsidianMat);
+        faceplate.position.set(0, 1.84, 0.3);
+        group.add(faceplate);
+
+        const visor = new THREE.Mesh(this.getGeo('imp_visor', () => new THREE.BoxGeometry(0.34, 0.05, 0.04)), emberEyeMat);
+        visor.position.set(0, 1.88, 0.37);
+        group.add(visor);
+
+        const crest = new THREE.Mesh(this.getGeo('imp_crest', () => new THREE.BoxGeometry(0.07, 0.2, 0.5)), obsidianMat);
+        crest.position.set(0, 2.16, 0.02);
+        group.add(crest);
+
+        // Great curved horns (two segments each so they arc)
+        const hornBaseGeo = this.getGeo('imp_horn_base', () => new THREE.ConeGeometry(0.1, 0.42, 8));
+        const hornTipGeo = this.getGeo('imp_horn_tip', () => new THREE.ConeGeometry(0.055, 0.34, 8));
+        for (const side of [-1, 1]) {
+          const hornBase = new THREE.Mesh(hornBaseGeo, obsidianMat);
+          hornBase.position.set(side * 0.3, 2.08, 0.04);
+          hornBase.rotation.z = -side * 0.6;
+          group.add(hornBase);
+
+          const hornTip = new THREE.Mesh(hornTipGeo, obsidianMat);
+          hornTip.position.set(side * 0.52, 2.28, 0.04);
+          hornTip.rotation.z = -side * 1.05;
+          group.add(hornTip);
+        }
+
+        // Tattered legion cape
+        const capeGeo = this.getGeo('imp_cape', () => new THREE.BoxGeometry(0.24, 0.72, 0.05));
+        for (let i = -1; i <= 1; i++) {
+          const strip = new THREE.Mesh(capeGeo, obsidianMat);
+          strip.position.set(i * 0.22, 1.06 - Math.abs(i) * 0.08, -0.36);
+          strip.rotation.x = -0.12;
+          strip.rotation.z = i * 0.08;
+          group.add(strip);
+        }
+
+        // Burning sword in the right hand
+        const swordGroup = new THREE.Group();
+        swordGroup.position.set(0.66, 1.06, 0.34);
+        swordGroup.rotation.set(-0.5, 0, -0.2);
+        group.add(swordGroup);
+
+        const grip = new THREE.Mesh(this.getGeo('imp_sword_grip', () => new THREE.CylinderGeometry(0.045, 0.05, 0.3, 8)), obsidianMat);
+        grip.position.y = -0.2;
+        swordGroup.add(grip);
+
+        const pommel = new THREE.Mesh(this.getGeo('imp_sword_pommel', () => new THREE.SphereGeometry(0.07, 8, 8)), demonArmorMat);
+        pommel.position.y = -0.38;
+        swordGroup.add(pommel);
+
+        const guard = new THREE.Mesh(this.getGeo('imp_sword_guard', () => new THREE.BoxGeometry(0.42, 0.08, 0.12)), demonArmorMat);
+        guard.position.y = -0.02;
+        swordGroup.add(guard);
+
+        const blade = new THREE.Mesh(this.getGeo('imp_sword_blade', () => new THREE.BoxGeometry(0.13, 1.35, 0.06)), obsidianMat);
+        blade.position.y = 0.68;
+        swordGroup.add(blade);
+
+        const edgeGeo = this.getGeo('imp_sword_edge', () => new THREE.BoxGeometry(0.045, 1.3, 0.08));
+        for (const ex of [-0.075, 0.075]) {
+          const edge = new THREE.Mesh(edgeGeo, flameMat);
+          edge.position.set(ex, 0.68, 0);
+          swordGroup.add(edge);
+        }
+
+        const wispGeo = this.getGeo('imp_flame_wisp', () => new THREE.ConeGeometry(0.07, 0.3, 6));
+        for (let i = 0; i < 4; i++) {
+          const wisp = new THREE.Mesh(wispGeo, flameWispMat);
+          wisp.position.set((i % 2 ? 0.1 : -0.1), 0.35 + i * 0.3, 0);
+          wisp.rotation.z = (i % 2 ? 0.3 : -0.3);
+          wisp.scale.setScalar(1.0 - i * 0.12);
+          swordGroup.add(wisp);
+        }
+
+        // Bone-crested shield in the left hand
+        const shieldGroup = new THREE.Group();
+        shieldGroup.position.set(-0.7, 1.02, 0.42);
+        shieldGroup.rotation.y = 0.26;
+        group.add(shieldGroup);
+
+        const shieldPlate = new THREE.Mesh(this.getGeo('imp_shield_plate', () => new THREE.BoxGeometry(0.8, 1.18, 0.1)), demonArmorMat);
+        shieldGroup.add(shieldPlate);
+
+        const shieldRim = new THREE.Mesh(this.getGeo('imp_shield_rim', () => new THREE.TorusGeometry(0.52, 0.045, 6, 4)), obsidianMat);
+        shieldRim.rotation.z = Math.PI / 4;
+        shieldRim.position.z = 0.02;
+        shieldGroup.add(shieldRim);
+
+        const skull = new THREE.Mesh(this.getGeo('imp_skull', () => new THREE.SphereGeometry(0.19, 12, 10)), boneMat);
+        skull.position.set(0, 0.16, 0.1);
+        skull.scale.set(1.0, 1.05, 0.85);
+        shieldGroup.add(skull);
+
+        const jaw = new THREE.Mesh(this.getGeo('imp_skull_jaw', () => new THREE.BoxGeometry(0.2, 0.1, 0.16)), boneMat);
+        jaw.position.set(0, -0.02, 0.14);
+        shieldGroup.add(jaw);
+
+        const socketGeo = this.getGeo('imp_skull_socket', () => new THREE.SphereGeometry(0.05, 8, 8));
+        for (const sx of [-0.07, 0.07]) {
+          const socket = new THREE.Mesh(socketGeo, emberEyeMat);
+          socket.position.set(sx, 0.2, 0.24);
+          shieldGroup.add(socket);
+        }
+
+        const shieldSpikeGeo = this.getGeo('imp_shield_spike', () => new THREE.ConeGeometry(0.05, 0.22, 6));
+        for (const sy of [-0.5, 0.5]) {
+          const spike = new THREE.Mesh(shieldSpikeGeo, obsidianMat);
+          spike.position.set(0, sy, 0.1);
+          spike.rotation.x = sy > 0 ? -Math.PI / 2 : Math.PI / 2;
+          shieldGroup.add(spike);
+        }
         break;
       }
 
-      case 'winged_doman': {
-        // ДОМАН-КАРАТЕЛЬ: Scarred hell bombardier loaded with explosive hell charges
-        const bodyGeo = this.getGeo('cap_0.45_0.78_12_16', () => {
-          const g = new THREE.CapsuleGeometry(0.45, 0.78, 12, 16);
-          g.rotateX(Math.PI / 2);
-          return g;
-        });
-        const body = new THREE.Mesh(bodyGeo, darkFurMat);
-        body.position.y = 0.58;
-        group.add(body);
 
-        const headGeo = this.getGeo('sph_0.35_14_14', () => new THREE.SphereGeometry(0.35, 14, 14));
-        const head = new THREE.Mesh(headGeo, darkFurMat);
-        head.position.set(0, 0.8, 0.48);
+      case 'winged_doman': {
+        // ДОМАН-КАРАТЕЛЬ: reinforced hell bombardier - scarred dark hyrax hauling a rack of
+        // glowing hell charges in a spiked iron harness.
+        const emberEyeMat = this.getMaterial('ember_eye_glow', () => new THREE.MeshBasicMaterial({ color: 0xff2200 }));
+        const tuskMat = this.getMaterial('tusk_ivory', () => new THREE.MeshStandardMaterial({ color: 0xf5f5dc, roughness: 0.35 }));
+
+        this.buildHyraxQuadruped(group, {
+          furMat: darkFurMat,
+          eyeMat: emberEyeMat,
+          bodyR: 0.46,
+          bodyL: 0.86,
+          bodyY: 0.78,
+          headR: 0.33,
+          headZ: 0.74,
+          legLen: 0.68,
+          tuskMat,
+        });
+
+        const ironMat = this.getMaterial('spike_iron', () => new THREE.MeshStandardMaterial({ color: 0x1f2937, metalness: 0.8, roughness: 0.35 }));
+        const canisterMat = this.getMaterial('hell_canister', () => new THREE.MeshStandardMaterial({ color: 0x27272a, metalness: 0.75, roughness: 0.3 }));
+        const glowBandMat = this.getMaterial('hell_glow_band', () => new THREE.MeshBasicMaterial({ color: 0xf97316 }));
+
+        // Spiked iron collar
+        const collar = new THREE.Mesh(this.getGeo('hell_collar', () => new THREE.TorusGeometry(0.34, 0.05, 8, 16)), ironMat);
+        collar.position.set(0, 0.92, 0.5);
+        collar.rotation.x = Math.PI / 2.6;
+        group.add(collar);
+
+        const collarSpikeGeo = this.getGeo('hell_collar_spike', () => new THREE.ConeGeometry(0.05, 0.2, 6));
+        for (let i = 0; i < 7; i++) {
+          const a = (i / 7) * Math.PI * 2;
+          const spike = new THREE.Mesh(collarSpikeGeo, ironMat);
+          spike.position.set(Math.cos(a) * 0.34, 0.92 + Math.sin(a) * 0.3, 0.5 - Math.sin(a) * 0.1);
+          spike.rotation.z = -a + Math.PI / 2;
+          group.add(spike);
+        }
+
+        // Iron pack frame + rack of hell charges
+        const rack = new THREE.Mesh(this.getGeo('hell_rack', () => new THREE.BoxGeometry(0.56, 0.08, 0.7)), ironMat);
+        rack.position.set(0, 1.14, -0.06);
+        group.add(rack);
+
+        const canGeo = this.getGeo('hell_can', () => new THREE.CylinderGeometry(0.1, 0.1, 0.42, 12));
+        const bandGeo = this.getGeo('hell_can_band', () => new THREE.TorusGeometry(0.103, 0.018, 6, 12));
+        const capGeo = this.getGeo('hell_can_cap', () => new THREE.CylinderGeometry(0.055, 0.075, 0.08, 10));
+        const ringGeo = this.getGeo('hell_can_ring', () => new THREE.TorusGeometry(0.04, 0.01, 5, 10));
+        for (let i = 0; i < 5; i++) {
+          const cx = -0.22 + i * 0.11;
+          const cz = i % 2 === 0 ? -0.1 : 0.06;
+          const cy = 1.4 + (i % 2 === 0 ? 0.0 : 0.07);
+
+          const can = new THREE.Mesh(canGeo, canisterMat);
+          can.position.set(cx, cy, cz);
+          group.add(can);
+
+          for (const by of [-0.1, 0.1]) {
+            const band = new THREE.Mesh(bandGeo, glowBandMat);
+            band.position.set(cx, cy + by, cz);
+            band.rotation.x = Math.PI / 2;
+            group.add(band);
+          }
+
+          const cap = new THREE.Mesh(capGeo, ironMat);
+          cap.position.set(cx, cy + 0.25, cz);
+          group.add(cap);
+
+          const ring = new THREE.Mesh(ringGeo, ironMat);
+          ring.position.set(cx, cy + 0.33, cz);
+          ring.rotation.x = Math.PI / 2;
+          group.add(ring);
+        }
+
+        // Harness straps
+        const strapGeo = this.getGeo('hell_strap', () => new THREE.TorusGeometry(0.48, 0.04, 6, 16));
+        for (const sz of [-0.24, 0.24]) {
+          const strap = new THREE.Mesh(strapGeo, ironMat);
+          strap.position.set(0, 0.78, sz);
+          strap.rotation.y = Math.PI / 2;
+          group.add(strap);
+        }
+
+        // Battle scars: riveted plates over the flanks
+        const scarGeo = this.getGeo('hell_scar_plate', () => new THREE.BoxGeometry(0.04, 0.2, 0.3));
+        for (const side of [-1, 1]) {
+          const plate = new THREE.Mesh(scarGeo, ironMat);
+          plate.position.set(side * 0.46, 0.8, -0.02);
+          group.add(plate);
+        }
+
+        // Exhaust vents blowing embers along the rack
+        const ventGeo = this.getGeo('hell_vent', () => new THREE.ConeGeometry(0.05, 0.14, 6));
+        for (const vx of [-0.28, 0.28]) {
+          const vent = new THREE.Mesh(ventGeo, glowBandMat);
+          vent.position.set(vx, 1.2, -0.34);
+          vent.rotation.x = Math.PI / 1.6;
+          group.add(vent);
+        }
+        break;
+      }
+
+
+      case 'skeleton_doman': {
+        // МАГМАТИЧЕСКИЙ ЖНЕЦ: magma golem of cracked basalt with a molten core, lava seams
+        // and a burning maw.
+        const basaltMat = this.getMaterial('solid_magma_stone', () => new THREE.MeshStandardMaterial({
+          color: 0x1c1917,
+          emissive: 0xff3300,
+          emissiveIntensity: 0.35,
+          roughness: 0.55,
+        }));
+        const basaltDarkMat = this.getMaterial('basalt_cold', () => new THREE.MeshStandardMaterial({ color: 0x18181b, roughness: 0.85 }));
+        const lavaMat = this.getMaterial('lava_crack_glow', () => new THREE.MeshBasicMaterial({ color: 0xff5500 }));
+        const coreMat = this.getMaterial('lava_core_bright', () => new THREE.MeshBasicMaterial({ color: 0xffb703 }));
+        const lavaHornMat = this.getMaterial('lava_horn_mat', () => new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xf97316, emissiveIntensity: 1.2 }));
+
+        const chunkGeo = this.getGeo('magma_chunk', () => new THREE.DodecahedronGeometry(0.42, 0));
+        const chunkSmallGeo = this.getGeo('magma_chunk_small', () => new THREE.IcosahedronGeometry(0.2, 0));
+
+        // Basalt torso built from welded chunks
+        const hips = new THREE.Mesh(chunkGeo, basaltDarkMat);
+        hips.position.set(0, 0.9, 0);
+        hips.scale.set(1.2, 0.9, 1.0);
+        group.add(hips);
+
+        const chest = new THREE.Mesh(chunkGeo, basaltMat);
+        chest.position.set(0, 1.52, 0.02);
+        chest.scale.set(1.4, 1.15, 1.1);
+        group.add(chest);
+
+        const shoulders = new THREE.Mesh(chunkGeo, basaltDarkMat);
+        shoulders.position.set(0, 1.94, -0.02);
+        shoulders.scale.set(1.55, 0.6, 1.0);
+        group.add(shoulders);
+
+        // Molten core with a containment ring
+        const core = new THREE.Mesh(this.getGeo('magma_core', () => new THREE.SphereGeometry(0.19, 12, 12)), coreMat);
+        core.position.set(0, 1.5, 0.36);
+        group.add(core);
+
+        const coreRing = new THREE.Mesh(this.getGeo('magma_core_ring', () => new THREE.TorusGeometry(0.26, 0.035, 6, 16)), lavaMat);
+        coreRing.position.set(0, 1.5, 0.34);
+        group.add(coreRing);
+
+        // Lava seams running across the body
+        const seamGeo = this.getGeo('magma_seam', () => new THREE.BoxGeometry(0.5, 0.045, 0.045));
+        for (let i = 0; i < 7; i++) {
+          const seam = new THREE.Mesh(seamGeo, lavaMat);
+          seam.position.set((i % 2 ? 0.1 : -0.1), 1.05 + i * 0.16, 0.3 - (i % 3) * 0.05);
+          seam.rotation.z = (i % 2 ? 0.5 : -0.4);
+          seam.scale.x = 0.5 + (i % 3) * 0.3;
+          group.add(seam);
+        }
+
+        // Head with burning eyes and an open maw
+        const head = new THREE.Mesh(chunkSmallGeo, basaltMat);
+        head.position.set(0, 2.24, 0.06);
+        head.scale.set(1.5, 1.4, 1.4);
         group.add(head);
 
-        const eyeMat = this.getMaterial('orange_demon_eye', () => new THREE.MeshBasicMaterial({ color: 0xd97706 }));
-        const eyeGeo = this.getGeo('sph_0.068_8_8', () => new THREE.SphereGeometry(0.068, 8, 8));
+        const eyeGeo = this.getGeo('magma_eye', () => new THREE.SphereGeometry(0.055, 8, 8));
         for (const side of [-1, 1]) {
-          const eye = new THREE.Mesh(eyeGeo, eyeMat);
-          eye.position.set(side * 0.16, 0.88, 0.78);
+          const eye = new THREE.Mesh(eyeGeo, coreMat);
+          eye.position.set(side * 0.11, 2.3, 0.26);
           group.add(eye);
         }
 
-        const packGeo = this.getGeo('box_0.78_0.58_0.68', () => new THREE.BoxGeometry(0.78, 0.58, 0.68));
-        const packMat = this.getMaterial('hell_charge_pack', () => new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.3 }));
-        const pack = new THREE.Mesh(packGeo, packMat);
-        pack.position.set(0, 1.12, -0.15);
-        group.add(pack);
-        break;
-      }
+        const maw = new THREE.Mesh(this.getGeo('magma_maw', () => new THREE.BoxGeometry(0.2, 0.09, 0.06)), lavaMat);
+        maw.position.set(0, 2.14, 0.27);
+        group.add(maw);
 
-      case 'skeleton_doman': {
-        // МАГМАТИЧЕСКИЙ ЖНЕЦ: Magma Golem of volcanic basalt stone with glowing lava core & cracks
-        const magmaMat = this.getMaterial('solid_magma_stone', () => new THREE.MeshStandardMaterial({
-          color: 0x1c1917,
-          emissive: 0xff3300,
-          emissiveIntensity: 1.0,
-          roughness: 0.3,
-        }));
-
-        const bodyGeo = this.getGeo('box_0.98_1.38_0.78', () => new THREE.BoxGeometry(0.98, 1.38, 0.78));
-        const body = new THREE.Mesh(bodyGeo, magmaMat);
-        body.position.y = 1.0;
-        group.add(body);
-
-        const headGeo = this.getGeo('sph_0.42_14_14', () => new THREE.SphereGeometry(0.42, 14, 14));
-        const head = new THREE.Mesh(headGeo, magmaMat);
-        head.position.set(0, 1.8, 0.12);
-        group.add(head);
-
-        // Magma Crystal Horns (Micro detail)
-        const hornGeo = this.getGeo('cone_0.08_0.45_8', () => new THREE.ConeGeometry(0.08, 0.45, 8));
-        const lavaHornMat = this.getMaterial('lava_horn_mat', () => new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xf97316, emissiveIntensity: 1.2 }));
+        // Lava horns
+        const hornGeo = this.getGeo('magma_horn', () => new THREE.ConeGeometry(0.08, 0.46, 8));
         for (const side of [-1, 1]) {
           const horn = new THREE.Mesh(hornGeo, lavaHornMat);
-          horn.position.set(side * 0.28, 2.1, 0.12);
-          horn.rotation.z = -side * 0.35;
+          horn.position.set(side * 0.24, 2.52, 0.06);
+          horn.rotation.z = -side * 0.4;
           group.add(horn);
+        }
+
+        // Shoulder vents venting pressure
+        const ventGeo = this.getGeo('magma_vent', () => new THREE.CylinderGeometry(0.09, 0.11, 0.14, 10));
+        for (const side of [-1, 1]) {
+          const vent = new THREE.Mesh(ventGeo, lavaMat);
+          vent.position.set(side * 0.55, 2.0, -0.06);
+          vent.rotation.z = side * 0.3;
+          group.add(vent);
+        }
+
+        // Heavy arms with lava seams and boulder fists
+        for (const side of [-1, 1]) {
+          const upper = new THREE.Mesh(chunkSmallGeo, basaltDarkMat);
+          upper.position.set(side * 0.66, 1.62, 0.02);
+          upper.scale.set(1.3, 1.5, 1.3);
+          group.add(upper);
+
+          const fore = new THREE.Mesh(chunkSmallGeo, basaltMat);
+          fore.position.set(side * 0.74, 1.16, 0.1);
+          fore.scale.set(1.2, 1.4, 1.2);
+          group.add(fore);
+
+          const fist = new THREE.Mesh(chunkSmallGeo, basaltDarkMat);
+          fist.position.set(side * 0.8, 0.82, 0.2);
+          fist.scale.setScalar(1.5);
+          group.add(fist);
+
+          const armSeam = new THREE.Mesh(seamGeo, lavaMat);
+          armSeam.position.set(side * 0.72, 1.4, 0.16);
+          armSeam.rotation.z = Math.PI / 2;
+          armSeam.scale.x = 0.55;
+          group.add(armSeam);
+        }
+
+        // Legs on hip pivots
+        for (const [name, sx] of [['leg_FL', -1], ['leg_FR', 1]] as const) {
+          const hip = new THREE.Group();
+          hip.name = name;
+          hip.position.set(sx * 0.28, 0.82, 0);
+          group.add(hip);
+
+          const thigh = new THREE.Mesh(chunkSmallGeo, basaltDarkMat);
+          thigh.position.y = -0.24;
+          thigh.scale.set(1.4, 1.6, 1.4);
+          hip.add(thigh);
+
+          const shin = new THREE.Mesh(chunkSmallGeo, basaltMat);
+          shin.position.y = -0.56;
+          shin.scale.set(1.2, 1.4, 1.2);
+          hip.add(shin);
+
+          const foot = new THREE.Mesh(chunkSmallGeo, basaltDarkMat);
+          foot.position.set(0, -0.76, 0.12);
+          foot.scale.set(1.5, 0.8, 1.8);
+          hip.add(foot);
+
+          const kneeSeam = new THREE.Mesh(seamGeo, lavaMat);
+          kneeSeam.position.set(0, -0.4, 0.16);
+          kneeSeam.scale.x = 0.4;
+          hip.add(kneeSeam);
+        }
+
+        // Molten slag pooling at its feet
+        const slagGeo = this.getGeo('magma_slag', () => new THREE.SphereGeometry(0.1, 8, 6));
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * Math.PI * 2;
+          const slag = new THREE.Mesh(slagGeo, lavaMat);
+          slag.position.set(Math.cos(a) * 0.45, 0.06, Math.sin(a) * 0.38);
+          slag.scale.set(1.3, 0.4, 1.3);
+          group.add(slag);
         }
         break;
       }
+
 
       // --- BOSSES ---
       case 'boss_goliath': {

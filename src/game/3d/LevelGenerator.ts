@@ -283,7 +283,7 @@ export class LevelGenerator {
     const totalRooms = 6 + Math.floor((levelNumber - 1) / 4) * 2;
     const isBossLevel = levelNumber % 4 === 0 || levelNumber === 17;
     const isSecretLevel = levelNumber === 17;
-    const hasFlashlight = levelNumber >= 10 && levelNumber <= 13;
+    const hasFlashlight = levelNumber >= 9 && levelNumber <= 12;
 
     // Biome Index (0: Lab, 1: Subway, 2: Mine, 3: Citadel, 4: White Void)
     let biomeIndex = 0;
@@ -304,21 +304,21 @@ export class LevelGenerator {
       lightColor = 0x22c55e;
       floorTexture = TextureGenerator.getAbandonedLabFloorTexture();
       wallTexture = TextureGenerator.getAbandonedLabWallTexture();
-    } else if (levelNumber >= 5 && levelNumber <= 9) {
+    } else if (levelNumber >= 5 && levelNumber <= 8) {
       biomeIndex = 1;
       biomeName = `Subway Metro Catacombs (Floor ${levelNumber})`;
       fogColor = 0x030c14;
       lightColor = 0x00aaff;
       floorTexture = TextureGenerator.getSubwayFloorTexture();
       wallTexture = TextureGenerator.getSubwayTileTexture();
-    } else if (levelNumber >= 10 && levelNumber <= 13) {
+    } else if (levelNumber >= 9 && levelNumber <= 12) {
       biomeIndex = 2;
       biomeName = `Abyssal Mine Caverns (Floor ${levelNumber})`;
       fogColor = 0x020202;
       lightColor = 0xffaa00;
       floorTexture = TextureGenerator.getMineRockTexture();
       wallTexture = TextureGenerator.getMineRockTexture();
-    } else if (levelNumber >= 14 && levelNumber <= 16) {
+    } else if (levelNumber >= 13 && levelNumber <= 16) {
       biomeIndex = 3;
       biomeName = `Hellish Citadel (Floor ${levelNumber})`;
       fogColor = 0x180202;
@@ -352,7 +352,7 @@ export class LevelGenerator {
       ? TextureGenerator.getAbandonedLabCeilingTexture()
       : wallTexture;
 
-    const isSubwayLevel = levelNumber >= 5 && levelNumber <= 9;
+    const isSubwayLevel = levelNumber >= 5 && levelNumber <= 8;
 
     // Materials
     const floorMat = new THREE.MeshStandardMaterial({

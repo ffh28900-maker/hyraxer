@@ -96,6 +96,9 @@ export interface EnemyInstance {
   losResult?: boolean;
   losTime?: number;
   losSampledPos?: THREE.Vector3;
+  /** Previous frame XZ, used to drive the walk gait without allocating a vector. */
+  prevX?: number;
+  prevZ?: number;
 }
 
 /** Animated sub-meshes of an enemy model, looked up once instead of via per-frame traverse. */
@@ -188,12 +191,12 @@ export const ENEMY_DISPLAY_NAMES: Record<EnemyType, string> = {
   centipede: 'МНОГОНОЖКА',
   worm: 'ДОМАН С БОЧКОЙ',
   spider_spitter: 'ПАУК-ПЛЕВАЛЬЩИК',
-  doman_dynamiter: 'ДОМАН-ДИНАМИТЧИК',
-  doman_miner: 'ДОМАН-ШАХТЕР',
-  doman_archer: 'ДОМАН-ЛУЧНИК',
-  imp_doman: 'АДСКИЙ БЕС',
-  winged_doman: 'КРЫЛАТЫЙ ДОМАН',
-  skeleton_doman: 'ДОМАН-СКЕЛЕТ',
+  doman_dynamiter: 'ГРЕМУЧИЙ ДОМАН',
+  doman_miner: 'ШАХТЁР-НАДЗИРАТЕЛЬ',
+  doman_archer: 'ГЕОЛОГИЧЕСКИЙ ПАРАЗИТ',
+  imp_doman: 'АДСКИЙ ПРЕТОРИАНЕЦ',
+  winged_doman: 'ДОМАН-КАРАТЕЛЬ',
+  skeleton_doman: 'МАГМАТИЧЕСКИЙ ЖНЕЦ',
   boss_goliath: 'БОСС: ГОЛИАФ',
   boss_worm: 'БОСС: ГИГАНТСКИЙ ЧЕРВЬ',
   boss_miner: 'БОСС: ВЛАДЫКА ШАХТ',
@@ -608,7 +611,7 @@ export class EnemyEngine {
       let yOffset = isBoss ? 4.8 : 2.4;
       if (type === 'boss_ultradoman') yOffset = 5.2;
       if (type === 'boss_worm') yOffset = 4.2;
-      if (type === 'drone' || type === 'winged_doman') yOffset = 2.8;
+      if (type === 'drone') yOffset = 2.8;
 
       labelSprite.position.set(0, yOffset, 0);
       mesh.add(labelSprite);
@@ -953,7 +956,7 @@ export class EnemyEngine {
           }
         }
 
-        if (enemy.type === 'drone' || enemy.type === 'winged_doman') {
+        if (enemy.type === 'drone') {
           enemy.position.y = 2.8 + Math.sin(nowMs * 0.003) * 0.25;
         }
 
@@ -974,7 +977,7 @@ export class EnemyEngine {
       // Smooth Model Turning Speed towards player
       const isRoboDashing = enemy.type === 'robo_doman' && enemy.dashStage && enemy.dashStage > 0;
       const isSniperFlipping = enemy.type === 'doman_sniper' && enemy.backflipTimer && enemy.backflipTimer > 0;
-      const isDroneKamikaze = (enemy.type === 'drone' || enemy.type === 'winged_doman') && (enemy.hp / enemy.maxHp <= 0.5);
+      const isDroneKamikaze = enemy.type === 'drone' && enemy.hp / enemy.maxHp <= 0.5;
 
       const isCentipede = enemy.type === 'centipede';
       const isWormActive = enemy.type === 'boss_worm' && enemy.wormState && enemy.wormState !== 'idle';
@@ -996,8 +999,10 @@ export class EnemyEngine {
           turnSpeed = 10.0; // Agile chasers
         } else if (enemy.type === 'doman_dynamiter') {
           turnSpeed = 9.0;
-        } else if (enemy.type === 'drone' || enemy.type === 'winged_doman') {
+        } else if (enemy.type === 'drone') {
           turnSpeed = 6.0;
+        } else if (enemy.type === 'winged_doman') {
+          turnSpeed = 7.0; // Heavy bombardier turns deliberately
         }
 
         enemy.mesh.quaternion.slerp(this.dummyLookObj.quaternion, Math.min(1.0, turnSpeed * delta));
@@ -1208,7 +1213,31 @@ export class EnemyEngine {
           onPlayerDamage(3);
           AudioEngine.playExplosion();
         }
-      } else if (enemy.type === 'drone' || enemy.type === 'winged_doman') {
+      } else if (enemy.type === 'winged_doman') {
+        // ДОМАН-КАРАТЕЛЬ: ground bombardier - closes to lobbing range, then arcs hell
+        // charges at the player from behind cover distance.
+        if (distToPlayer > 16.0) {
+          this.tempDir.subVectors(playerPos, enemy.position);
+          this.tempDir.y = 0;
+          this.tempDir.normalize();
+          enemy.position.addScaledVector(this.tempDir, 6.5 * delta);
+        } else if (distToPlayer < 7.0) {
+          // Too close to lob safely - back off while staying face-on
+          this.tempDir.subVectors(enemy.position, playerPos);
+          this.tempDir.y = 0;
+          if (this.tempDir.lengthSq() < 0.001) this.tempDir.set(0, 0, 1);
+          this.tempDir.normalize();
+          enemy.position.addScaledVector(this.tempDir, 4.5 * delta);
+        }
+
+        if (enemy.attackCooldown <= 0 && distToPlayer < 20.0 && this.hasLineOfSight(enemy, playerPos)) {
+          enemy.attackCooldown = 2.6;
+          this.tempVec.copy(enemy.position);
+          this.tempVec.y += 1.5; // Thrown off the back rack
+          this.spawnDynamiteBundle(this.tempVec, playerPos, 6);
+          AudioEngine.playExplosion();
+        }
+      } else if (enemy.type === 'drone') {
         const hpRatio = enemy.hp / enemy.maxHp;
         const activeRoom = this.getRoomById(enemy.roomId, rooms);
         const roomFloorY = activeRoom ? activeRoom.yCenter : 0;
@@ -1926,6 +1955,30 @@ export class EnemyEngine {
         }
       }
 
+      // Walk gait for regular mobs whose models expose hip-pivoted legs (bosses and the
+      // centipede run their own dedicated animation blocks).
+      const gaitParts = enemy.animParts;
+      if (
+        gaitParts &&
+        !enemy.isBoss &&
+        enemy.type !== 'centipede' &&
+        (gaitParts.legsForward.length > 0 || gaitParts.legsBackward.length > 0)
+      ) {
+        const dx = enemy.position.x - (enemy.prevX ?? enemy.position.x);
+        const dz = enemy.position.z - (enemy.prevZ ?? enemy.position.z);
+        enemy.prevX = enemy.position.x;
+        enemy.prevZ = enemy.position.z;
+        const minStep = 0.6 * delta; // ~0.6 m/s counts as walking
+        const isWalking = dx * dx + dz * dz > minStep * minStep;
+        const swing = isWalking ? Math.sin(nowMs * 0.014) * 0.5 : Math.sin(nowMs * 0.0022) * 0.05;
+        for (let i = 0; i < gaitParts.legsForward.length; i++) {
+          gaitParts.legsForward[i].rotation.x = swing;
+        }
+        for (let i = 0; i < gaitParts.legsBackward.length; i++) {
+          gaitParts.legsBackward[i].rotation.x = -swing;
+        }
+      }
+
       // Resolve solid wall, obstacle, player, and arena collision for this enemy
       this.resolveEnemyObstacleCollisions(enemy, this.getObstacles(), playerPos, rooms);
     }
@@ -2116,7 +2169,7 @@ export class EnemyEngine {
 
     const isSubmergedWorm = enemy.type === 'boss_worm' && (enemy.wormState === 'burrow_down' || enemy.wormState === 'burrow_underground' || enemy.wormState === 'emerge_up');
 
-    if (enemy.type !== 'drone' && enemy.type !== 'winged_doman' && !isSubmergedWorm) {
+    if (enemy.type !== 'drone' && !isSubmergedWorm) {
       this.rayOriginTemp.copy(enemy.position);
       this.rayOriginTemp.y += 4.0;
       this.tempDir.set(0, -1, 0);
@@ -2206,7 +2259,7 @@ export class EnemyEngine {
         activeRoom = this.roomIndex.get(closestId) || rooms[0];
       }
 
-      const isDrone = enemy.type === 'drone' || enemy.type === 'winged_doman';
+      const isDrone = enemy.type === 'drone';
       const roomMargin = enemy.isBoss ? 2.5 : (isDrone ? 1.8 : 1.2);
       const minX = activeRoom.xCenter - activeRoom.width / 2 + roomMargin;
       const maxX = activeRoom.xCenter + activeRoom.width / 2 - roomMargin;
@@ -2270,7 +2323,7 @@ export class EnemyEngine {
     }
 
     // ABSOLUTE HARD FLOOR & CEILING SAFETY CLAMP FOR FLYING & GROUND MOBS
-    if (enemy.type === 'drone' || enemy.type === 'winged_doman') {
+    if (enemy.type === 'drone') {
       const minDroneY = roomFloorY + 1.8;
       const maxDroneY = roomFloorY + 5.2;
       enemy.position.y = THREE.MathUtils.clamp(enemy.position.y, minDroneY, maxDroneY);
@@ -2406,7 +2459,7 @@ export class EnemyEngine {
     AudioEngine.playRocketLaunch();
   }
 
-  public spawnDynamiteBundle(from: THREE.Vector3, to: THREE.Vector3) {
+  public spawnDynamiteBundle(from: THREE.Vector3, to: THREE.Vector3, damage: number = 40) {
     const mesh = new THREE.Mesh(
       ModelBuilder.getGeo('proj:dynamite', () => new THREE.CylinderGeometry(0.15, 0.15, 0.6)),
       ModelBuilder.getMaterial('proj:dynamite', () => new THREE.MeshBasicMaterial({ color: 0xff3300 }))
@@ -2419,7 +2472,7 @@ export class EnemyEngine {
     this.projectiles.push({
       mesh,
       velocity: dir.multiplyScalar(18),
-      damage: 40,
+      damage,
       isEnemy: true,
       life: 5.0,
       isDynamite: true,
