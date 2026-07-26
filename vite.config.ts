@@ -6,6 +6,17 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            // three.js changes rarely - keep it in its own long-cached chunk, separate
+            // from app code (it is also only loaded when a level actually starts).
+            three: ['three'],
+          },
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

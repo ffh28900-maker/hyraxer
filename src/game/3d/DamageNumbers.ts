@@ -1,161 +1,245 @@
 import * as THREE from 'three';
-
-export interface DamageNumberItem {
-  sprite: THREE.Sprite;
-  velocity: THREE.Vector3;
-  life: number;
-  maxLife: number;
-  initialScale: number;
-  texture: THREE.CanvasTexture;
-  material: THREE.SpriteMaterial;
-}
+import { ModelBuilder } from './ModelBuilder';
 
 export class DamageNumbers {
   private scene: THREE.Scene;
-  private items: DamageNumberItem[] = [];
+  private digitMaterialsNormal: THREE.SpriteMaterial[] = [];
+  private digitMaterialsCrit: THREE.SpriteMaterial[] = [];
+  private critBadgeMaterial: THREE.SpriteMaterial;
+
+  private pool: {
+    group: THREE.Group;
+    digitSprites: THREE.Sprite[];
+    critBadgeSprite: THREE.Sprite;
+    velocity: THREE.Vector3;
+    life: number;
+    maxLife: number;
+    initialScale: number;
+    active: boolean;
+  }[] = [];
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+
+    // PERF: the digit atlas (21 canvas draws + GPU texture uploads) is built once per
+    // SESSION via the shared material cache, not once per level load/restart. Registering
+    // through ModelBuilder.getMaterial also protects the materials (and their canvas
+    // textures) from level teardown disposal.
+    for (let d = 0; d <= 9; d++) {
+      this.digitMaterialsNormal.push(
+        ModelBuilder.getMaterial(`dmgnum:d${d}`, () => new THREE.SpriteMaterial({
+          map: this.createDigitTexture(`${d}`, false),
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        })) as THREE.SpriteMaterial
+      );
+      this.digitMaterialsCrit.push(
+        ModelBuilder.getMaterial(`dmgnum:c${d}`, () => new THREE.SpriteMaterial({
+          map: this.createDigitTexture(`${d}`, true),
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        })) as THREE.SpriteMaterial
+      );
+    }
+
+    this.critBadgeMaterial = ModelBuilder.getMaterial('dmgnum:badge', () => new THREE.SpriteMaterial({
+      map: this.createCritBadgeTexture(),
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    })) as THREE.SpriteMaterial;
+
+    // Pre-allocate pool of 20 DamageNumber Groups
+    for (let i = 0; i < 20; i++) {
+      const group = new THREE.Group();
+      group.visible = false;
+
+      const digitSprites: THREE.Sprite[] = [];
+      for (let s = 0; s < 4; s++) {
+        const sprite = new THREE.Sprite(this.digitMaterialsNormal[0]);
+        sprite.visible = false;
+        sprite.frustumCulled = false;
+        group.add(sprite);
+        digitSprites.push(sprite);
+      }
+
+      const critBadgeSprite = new THREE.Sprite(this.critBadgeMaterial);
+      critBadgeSprite.visible = false;
+      critBadgeSprite.frustumCulled = false;
+      critBadgeSprite.scale.set(1.2, 0.6, 1);
+      critBadgeSprite.position.set(0, 0.55, 0);
+      group.add(critBadgeSprite);
+
+      this.scene.add(group);
+
+      this.pool.push({
+        group,
+        digitSprites,
+        critBadgeSprite,
+        velocity: new THREE.Vector3(),
+        life: 0,
+        maxLife: 1.0,
+        initialScale: 1.0,
+        active: false,
+      });
+    }
   }
 
-  public spawn(position: THREE.Vector3, damage: number, isCrit: boolean = false) {
+  private createDigitTexture(digitStr: string, isCrit: boolean): THREE.CanvasTexture {
     const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const roundedDmg = Math.round(damage);
-    const text = isCrit ? `💥 ${roundedDmg} CRIT!` : `${roundedDmg}`;
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d')!;
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
     if (isCrit) {
       ctx.font = '900 48px "Courier New", monospace, sans-serif';
-
-      // Drop shadow / glow
-      ctx.shadowColor = '#FF1744';
-      ctx.shadowBlur = 12;
-
-      // Outer dark outline
       ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 10;
-      ctx.strokeText(text, 128, 64);
+      ctx.lineWidth = 8;
+      ctx.strokeText(digitStr, 32, 32);
 
-      // Inner gradient fill
-      const grad = ctx.createLinearGradient(0, 20, 0, 100);
+      const grad = ctx.createLinearGradient(0, 10, 0, 54);
       grad.addColorStop(0, '#FFFFFF');
       grad.addColorStop(0.3, '#FFEA00');
       grad.addColorStop(1, '#FF1744');
       ctx.fillStyle = grad;
-      ctx.fillText(text, 128, 64);
+      ctx.fillText(digitStr, 32, 32);
     } else {
-      ctx.font = '800 38px "Courier New", monospace, sans-serif';
-
-      // Outer dark outline
+      ctx.font = '800 44px "Courier New", monospace, sans-serif';
       ctx.strokeStyle = '#000000';
-      ctx.lineWidth = 8;
-      ctx.strokeText(text, 128, 64);
+      ctx.lineWidth = 7;
+      ctx.strokeText(digitStr, 32, 32);
 
-      // Standard yellow/white fill
       ctx.fillStyle = '#FFEB3B';
-      ctx.fillText(text, 128, 64);
+      ctx.fillText(digitStr, 32, 32);
     }
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.minFilter = THREE.LinearFilter;
     texture.magFilter = THREE.LinearFilter;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.flipY = false;
+    return texture;
+  }
 
-    const material = new THREE.SpriteMaterial({
-      map: texture,
-      transparent: true,
-      depthTest: false, // Ensures damage numbers pop cleanly over 3D geometry
-      depthWrite: false,
-    });
+  private createCritBadgeTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d')!;
 
-    const sprite = new THREE.Sprite(material);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '900 32px "Courier New", monospace, sans-serif';
 
-    const initialScale = isCrit ? 2.8 : 1.8;
-    // Start at 60% scale for pop/spring entrance animation
-    sprite.scale.set(initialScale * 0.6, (initialScale * 0.6) * 0.5, 1);
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 6;
+    ctx.strokeText('💥 CRIT!', 64, 32);
 
-    // Random slight offset from exact hit point
-    const spawnPos = position.clone().add(
-      new THREE.Vector3(
-        (Math.random() - 0.5) * 0.8,
-        0.8 + Math.random() * 0.4,
-        (Math.random() - 0.5) * 0.8
-      )
+    ctx.fillStyle = '#FF1744';
+    ctx.fillText('💥 CRIT!', 64, 32);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.flipY = false;
+    return texture;
+  }
+
+  public spawn(position: THREE.Vector3, damage: number, isCrit: boolean = false) {
+    let item = this.pool.find((i) => !i.active);
+    if (!item) {
+      item = this.pool[0];
+    }
+
+    const roundedDmg = Math.max(1, Math.round(damage));
+    const str = `${roundedDmg}`;
+    const numDigits = Math.min(4, str.length);
+    const materials = isCrit ? this.digitMaterialsCrit : this.digitMaterialsNormal;
+
+    const spacing = 0.55;
+    const startX = -((numDigits - 1) * spacing) / 2;
+
+    for (let i = 0; i < 4; i++) {
+      const sprite = item.digitSprites[i];
+      if (i < numDigits) {
+        const digitVal = parseInt(str[i], 10) || 0;
+        sprite.material = materials[digitVal];
+        sprite.position.set(startX + i * spacing, 0, 0);
+        sprite.scale.set(0.7, 0.7, 1);
+        sprite.visible = true;
+      } else {
+        sprite.visible = false;
+      }
+    }
+
+    if (isCrit) {
+      item.critBadgeSprite.visible = true;
+      item.critBadgeSprite.position.set(0, 0.55, 0);
+    } else {
+      item.critBadgeSprite.visible = false;
+    }
+
+    item.group.position.set(
+      position.x + (Math.random() - 0.5) * 0.6,
+      position.y + 0.8 + Math.random() * 0.3,
+      position.z + (Math.random() - 0.5) * 0.6
     );
-    sprite.position.copy(spawnPos);
 
-    this.scene.add(sprite);
+    const initialScale = isCrit ? 1.6 : 1.2;
+    item.initialScale = initialScale;
+    item.group.scale.setScalar(initialScale * 0.5);
 
-    const maxLife = isCrit ? 0.95 : 0.75;
-    const velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 2.0,
-      isCrit ? 4.5 : 3.2,
-      (Math.random() - 0.5) * 2.0
+    const maxLife = isCrit ? 0.7 : 0.5;
+    item.life = maxLife;
+    item.maxLife = maxLife;
+    item.velocity.set(
+      (Math.random() - 0.5) * 1.5,
+      isCrit ? 3.5 : 2.5,
+      (Math.random() - 0.5) * 1.5
     );
 
-    this.items.push({
-      sprite,
-      velocity,
-      life: maxLife,
-      maxLife,
-      initialScale,
-      texture,
-      material,
-    });
+    item.active = true;
+    item.group.visible = true;
   }
 
   public update(delta: number) {
-    for (let i = this.items.length - 1; i >= 0; i--) {
-      const item = this.items[i];
+    for (const item of this.pool) {
+      if (!item.active) continue;
+
       item.life -= delta;
 
-      // Position update
-      item.sprite.position.addScaledVector(item.velocity, delta);
-      // Gravity & air drag
-      item.velocity.y -= 3.0 * delta;
-      item.velocity.multiplyScalar(Math.pow(0.3, delta));
+      item.group.position.addScaledVector(item.velocity, delta);
+      item.velocity.y -= 4.0 * delta;
 
-      const ageRatio = 1.0 - item.life / item.maxLife; // 0 to 1
+      const progress = 1.0 - item.life / item.maxLife; // 0 to 1
 
-      // Entrance Pop Animation (0 to 0.15s)
-      if (ageRatio < 0.2) {
-        const pop = ageRatio / 0.2;
-        const currentScale = item.initialScale * (0.6 + 0.5 * Math.sin(pop * Math.PI * 0.5));
-        item.sprite.scale.set(currentScale, currentScale * 0.5, 1);
+      if (progress < 0.2) {
+        const pop = progress / 0.2;
+        const scale = item.initialScale * (0.5 + 0.6 * Math.sin(pop * Math.PI * 0.5));
+        item.group.scale.setScalar(scale);
       } else {
-        const currentScale = item.initialScale * 1.1;
-        item.sprite.scale.set(currentScale, currentScale * 0.5, 1);
-      }
-
-      // Fade out in last 50% of lifespan
-      if (ageRatio > 0.5) {
-        const fade = (1.0 - ageRatio) / 0.5;
-        item.material.opacity = Math.max(0, fade);
+        const fade = (1.0 - progress) / 0.8;
+        const scale = item.initialScale * 1.1 * Math.max(0, fade);
+        item.group.scale.setScalar(scale);
       }
 
       if (item.life <= 0) {
-        this.scene.remove(item.sprite);
-        item.texture.dispose();
-        item.material.dispose();
-        this.items.splice(i, 1);
+        item.active = false;
+        item.group.visible = false;
       }
     }
   }
 
   public clear() {
-    for (const item of this.items) {
-      this.scene.remove(item.sprite);
-      item.texture.dispose();
-      item.material.dispose();
+    for (const item of this.pool) {
+      item.active = false;
+      item.group.visible = false;
     }
-    this.items = [];
   }
 }

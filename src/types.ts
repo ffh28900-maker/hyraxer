@@ -2,6 +2,16 @@ export type WeaponId = 'peacemaker' | 'trembler' | 'punisher' | 'grapple';
 
 export type RankGrade = 'S' | 'A' | 'B' | 'C' | 'D' | '-';
 
+export interface StyleBreakdown {
+  movementPoints: number;
+  airtimePoints: number;
+  multikillPoints: number;
+  movementRank: RankGrade;
+  airtimeRank: RankGrade;
+  multikillRank: RankGrade;
+  overallStyleRank: string;
+}
+
 export interface LevelResult {
   completed: boolean;
   rank: RankGrade;
@@ -9,6 +19,7 @@ export interface LevelResult {
   timeSec: number;
   kills: number;
   totalEnemies: number;
+  styleBreakdown?: StyleBreakdown;
 }
 
 export interface PlayerProgress {

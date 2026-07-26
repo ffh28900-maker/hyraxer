@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayerProgress, LevelResult, WeaponId, RankGrade } from './types';
-import { GameEngine, HudState } from './game/GameEngine';
+import type { GameEngine, HudState } from './game/GameEngine';
 import { MainMenu } from './components/MainMenu';
 import { LevelSelect } from './components/LevelSelect';
 import { HUD } from './components/HUD';
@@ -15,7 +15,7 @@ const DEFAULT_PROGRESS: PlayerProgress = {
     peacemaker: true,
     trembler: false,
     punisher: false,
-    grapple: false,
+    grapple: true,
   },
   highScore: 0,
   settings: {
@@ -32,7 +32,18 @@ export default function App() {
   const [progress, setProgress] = useState<PlayerProgress>(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          ...parsed,
+          unlockedWeapons: {
+            peacemaker: true,
+            grapple: true,
+            trembler: Boolean(parsed.unlockedWeapons?.trembler),
+            punisher: Boolean(parsed.unlockedWeapons?.punisher),
+          },
+        };
+      }
     } catch {
       // Fallback
     }
@@ -49,12 +60,16 @@ export default function App() {
 
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const gameEngineRef = useRef<GameEngine | null>(null);
+  // PERF: the engine effect reads progress through a ref so weapon unlocks don't appear in
+  // its dependency list - a new unlockedWeapons object identity used to tear down and
+  // rebuild the ENTIRE engine (full level regeneration) while the victory modal was open.
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
 
-  // Developer Cheat Code ('god' or 'пщв')
+  // Developer Cheat Codes ('god', 'dick', 'вшсл')
   useEffect(() => {
-    if (gameState === 'playing') return;
-
     let keyBuffer = '';
+    let cheatMsgTimeout: number | undefined;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
@@ -92,16 +107,33 @@ export default function App() {
           AudioEngine.playCoinToss();
           setCheatMessage('GOD MODE ACTIVATED — ВСЕ 17 УРОВНЕЙ И АРСЕНАЛ РАЗБЛОКИРОВАНЫ!');
 
-          setTimeout(() => {
+          window.clearTimeout(cheatMsgTimeout);
+          cheatMsgTimeout = window.setTimeout(() => {
             setCheatMessage(null);
           }, 3500);
+        }
+
+        if (keyBuffer.endsWith('dick') || keyBuffer.endsWith('вшсл')) {
+          keyBuffer = '';
+          AudioEngine.playCoinToss();
+          setCheatMessage('⚡ СЕКРЕТНАЯ ВЫСТАВКА ВСЕХ МОБОВ И БОССОВ ОТКРЫТА! ⚡');
+
+          window.clearTimeout(cheatMsgTimeout);
+          cheatMsgTimeout = window.setTimeout(() => {
+            setCheatMessage(null);
+          }, 4000);
+
+          startLevel(99);
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [gameState]);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.clearTimeout(cheatMsgTimeout);
+    };
+  }, []);
 
   // Save Progress
   useEffect(() => {
@@ -116,6 +148,23 @@ export default function App() {
   useEffect(() => {
     AudioEngine.setVolumes(progress.settings.soundVolume, progress.settings.musicVolume);
   }, [progress.settings]);
+
+  // AudioContext lifecycle: create/resume on the first user gesture (autoplay policy) so
+  // menu SFX work before any level starts, and re-resume when the tab becomes visible
+  // again (a suspended context silently swallowed every sound before).
+  useEffect(() => {
+    const initAudio = () => AudioEngine.init();
+    window.addEventListener('pointerdown', initAudio, { once: true });
+    const onVisibilityChange = () => {
+      // Resume-only: creating a context here would be a pre-gesture autoplay violation.
+      if (!document.hidden) AudioEngine.resume();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('pointerdown', initAudio);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
 
   // Safe Pointer Lock Request helper
   const safeRequestPointerLock = (element: HTMLElement | null) => {
@@ -146,27 +195,35 @@ export default function App() {
     }, 150);
   };
 
-  // Setup GameEngine instance when entering 'playing' state
+  // PERF: stable callback identities so React.memo(HUD) is effective - inline arrows here
+  // used to force full HUD reconciliation on every App render.
+  const handleRestartLevel = useCallback(() => startLevel(activeLevelNumber), [activeLevelNumber]);
+  const handleExitToMenu = useCallback(() => setGameState('menu'), []);
+
+  // Setup GameEngine instance when entering 'playing' state.
+  // PERF: the engine module (three.js + ~13k lines of game code) is loaded on demand so
+  // the menu paints without downloading/parsing the whole engine bundle first.
   useEffect(() => {
     if (gameState !== 'playing' || !canvasContainerRef.current) return;
 
-    const engine = new GameEngine(
+    let cancelled = false;
+    let activeCleanup: (() => void) | null = null;
+
+    import('./game/GameEngine').then(({ GameEngine }) => {
+      if (cancelled || !canvasContainerRef.current) return;
+
+      const engine = new GameEngine(
       canvasContainerRef.current,
       (hud) => setHudState(hud),
       (result, unlockedNewWeapon) => {
         setLevelResult(result);
         if (unlockedNewWeapon) {
           setUnlockedWeaponBanner(unlockedNewWeapon);
-          setProgress((prev) => ({
-            ...prev,
-            unlockedWeapons: {
-              ...prev.unlockedWeapons,
-              [unlockedNewWeapon]: true,
-            },
-          }));
         }
 
-        // Save Completed Level Result
+        // Save weapon unlock + completed level result in ONE update (two back-to-back
+        // setProgress calls used to run the persistence effect - and its synchronous
+        // localStorage JSON write - twice per level completion).
         setProgress((prev) => {
           const prevRes = prev.completedLevels[activeLevelNumber];
           let bestRank: RankGrade = result.rank;
@@ -174,6 +231,9 @@ export default function App() {
 
           return {
             ...prev,
+            unlockedWeapons: unlockedNewWeapon
+              ? { ...prev.unlockedWeapons, [unlockedNewWeapon]: true }
+              : prev.unlockedWeapons,
             completedLevels: {
               ...prev.completedLevels,
               [activeLevelNumber]: {
@@ -194,14 +254,21 @@ export default function App() {
     );
 
     gameEngineRef.current = engine;
-    engine.loadLevel(activeLevelNumber, progress.unlockedWeapons);
+    const effectiveUnlockedWeapons = {
+      peacemaker: true,
+      grapple: true,
+      trembler: Boolean(progressRef.current.unlockedWeapons?.trembler),
+      punisher: Boolean(progressRef.current.unlockedWeapons?.punisher),
+    };
+    engine.loadLevel(activeLevelNumber, effectiveUnlockedWeapons);
     engine.start();
 
-    // PointerLock
+    // PointerLock (element captured for cleanup - the ref may already be null then)
+    const containerEl = canvasContainerRef.current;
     const handleCanvasClick = () => {
       safeRequestPointerLock(canvasContainerRef.current);
     };
-    canvasContainerRef.current.addEventListener('click', handleCanvasClick);
+    containerEl.addEventListener('click', handleCanvasClick);
 
     const handlePointerLockError = (e: Event) => {
       e.stopPropagation();
@@ -212,36 +279,65 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!engine.player) return;
       const code = e.code;
+      const key = e.key.toLowerCase();
 
-      if (code === 'KeyW') engine.player.moveInput.forward = true;
-      if (code === 'KeyS') engine.player.moveInput.backward = true;
-      if (code === 'KeyA') engine.player.moveInput.left = true;
-      if (code === 'KeyD') engine.player.moveInput.right = true;
+      if (code === 'KeyW' || key === 'w' || key === 'ц') engine.player.moveInput.forward = true;
+      if (code === 'KeyS' || key === 's' || key === 'ы') engine.player.moveInput.backward = true;
+      if (code === 'KeyA' || key === 'a' || key === 'ф') engine.player.moveInput.left = true;
+      if (code === 'KeyD' || key === 'd' || key === 'в') engine.player.moveInput.right = true;
 
-      if (code === 'ShiftLeft' || code === 'ShiftRight') engine.player.triggerDash();
+      if ((code === 'ShiftLeft' || code === 'ShiftRight') && !e.repeat) engine.player.triggerDash();
       if (code === 'Space') engine.player.triggerJump();
       if (code === 'ControlLeft' || code === 'ControlRight') engine.player.startGroundPoundOrSlide();
 
-      if (code === 'KeyF' && !e.repeat) engine.handlePunchStart();
-      if (code === 'KeyQ') engine.handleGrapple();
-      if (code === 'KeyR') startLevel(activeLevelNumber);
+      if ((code === 'KeyF' || key === 'f' || key === 'а') && !e.repeat) engine.handlePunchStart();
+      if ((code === 'KeyQ' || key === 'q' || key === 'й') && !e.repeat) engine.handleGrapple();
+      if (code === 'KeyR' || key === 'r' || key === 'к') startLevel(activeLevelNumber);
 
-      if (code === 'Digit1') engine.player.currentWeapon = 'peacemaker';
-      if (code === 'Digit2' && progress.unlockedWeapons.trembler) engine.player.currentWeapon = 'trembler';
-      if (code === 'Digit3' && progress.unlockedWeapons.punisher) engine.player.currentWeapon = 'punisher';
+      if (code === 'Digit1' || code === 'Numpad1' || key === '1' || key === '!') {
+        engine.switchWeapon('peacemaker');
+      }
+      if (code === 'Digit2' || code === 'Numpad2' || key === '2' || key === '"' || key === '@') {
+        engine.switchWeapon('trembler');
+      }
+      if (code === 'Digit3' || code === 'Numpad3' || key === '3' || key === '№' || key === '#') {
+        engine.switchWeapon('punisher');
+      }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (!engine.player) return;
       const code = e.code;
+      const key = e.key.toLowerCase();
 
-      if (code === 'KeyW') engine.player.moveInput.forward = false;
-      if (code === 'KeyS') engine.player.moveInput.backward = false;
-      if (code === 'KeyA') engine.player.moveInput.left = false;
-      if (code === 'KeyD') engine.player.moveInput.right = false;
+      if (code === 'KeyW' || key === 'w' || key === 'ц') engine.player.moveInput.forward = false;
+      if (code === 'KeyS' || key === 's' || key === 'ы') engine.player.moveInput.backward = false;
+      if (code === 'KeyA' || key === 'a' || key === 'ф') engine.player.moveInput.left = false;
+      if (code === 'KeyD' || key === 'd' || key === 'в') engine.player.moveInput.right = false;
 
       if (code === 'ControlLeft' || code === 'ControlRight') engine.player.stopSlide();
-      if (code === 'KeyF') engine.handlePunchRelease();
+      if (code === 'KeyF' || key === 'f' || key === 'а') engine.handlePunchRelease();
+    };
+
+    const handleWheel = (e: WheelEvent) => {
+      if (!engine.player) return;
+      const weapons: WeaponId[] = ['peacemaker', 'trembler', 'punisher'];
+      const available = weapons.filter((w) => engine.player.unlockedWeapons[w]);
+      if (available.length <= 1) return;
+
+      const currIdx = available.indexOf(engine.player.currentWeapon);
+      if (currIdx === -1) return;
+
+      let nextIdx = currIdx;
+      if (e.deltaY > 0) {
+        nextIdx = (currIdx + 1) % available.length;
+      } else if (e.deltaY < 0) {
+        nextIdx = (currIdx - 1 + available.length) % available.length;
+      }
+
+      if (nextIdx !== currIdx) {
+        engine.switchWeapon(available[nextIdx]);
+      }
     };
 
     const handleMouseMove = (e: MouseEvent) => {
@@ -253,30 +349,105 @@ export default function App() {
 
     const handleMouseDown = (e: MouseEvent) => {
       if (!document.pointerLockElement) return;
-      if (e.button === 0) engine.handlePrimaryFire();
+      if (e.button === 0) {
+        engine.isPrimaryMouseDown = true;
+        engine.handlePrimaryFire();
+      }
       if (e.button === 2) engine.handleSecondarySkill();
+    };
+
+    const handleMouseUp = (e: MouseEvent) => {
+      if (e.button === 0) {
+        engine.isPrimaryMouseDown = false;
+      }
     };
 
     const handleContextMenu = (e: MouseEvent) => e.preventDefault();
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('wheel', handleWheel);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('contextmenu', handleContextMenu);
 
+      activeCleanup = () => {
+        window.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('keyup', handleKeyUp);
+        window.removeEventListener('wheel', handleWheel);
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mousedown', handleMouseDown);
+        window.removeEventListener('mouseup', handleMouseUp);
+        window.removeEventListener('contextmenu', handleContextMenu);
+        document.removeEventListener('pointerlockerror', handlePointerLockError);
+        containerEl.removeEventListener('click', handleCanvasClick);
+        engine.destroy();
+        gameEngineRef.current = null;
+      };
+    }).catch((err) => {
+      // A failed chunk load (flaky network) or engine setup error would otherwise be a
+      // silent black screen.
+      console.error('Failed to start the game engine:', err);
+      setGameState('menu');
+    });
+
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('contextmenu', handleContextMenu);
-      document.removeEventListener('pointerlockerror', handlePointerLockError);
-      canvasContainerRef.current?.removeEventListener('click', handleCanvasClick);
-      engine.destroy();
-      gameEngineRef.current = null;
+      cancelled = true;
+      if (activeCleanup) {
+        activeCleanup();
+        activeCleanup = null;
+      }
     };
-  }, [gameState, activeLevelNumber, progress.unlockedWeapons, sessionNonce]);
+  }, [gameState, activeLevelNumber, sessionNonce]);
+
+  // Keep a live engine's weapon unlocks in sync (e.g. the god cheat) without rebuilding it.
+  useEffect(() => {
+    const engine = gameEngineRef.current;
+    if (engine && engine.player) {
+      engine.player.unlockedWeapons = {
+        peacemaker: true,
+        grapple: true,
+        trembler: Boolean(progress.unlockedWeapons?.trembler),
+        punisher: Boolean(progress.unlockedWeapons?.punisher),
+      };
+    }
+  }, [progress.unlockedWeapons]);
+
+  const handleResetProgress = () => {
+    try {
+      localStorage.removeItem(LOCAL_STORAGE_KEY);
+      localStorage.clear();
+    } catch {
+      // ignore
+    }
+
+    const resetState: PlayerProgress = {
+      completedLevels: {},
+      unlockedWeapons: {
+        peacemaker: true,
+        trembler: false,
+        punisher: false,
+        grapple: true,
+      },
+      highScore: 0,
+      settings: progress.settings,
+    };
+
+    setProgress(resetState);
+    try {
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(resetState));
+    } catch {
+      // ignore
+    }
+
+    setActiveLevelNumber(1);
+    setHudState(null);
+    setLevelResult(null);
+    setUnlockedWeaponBanner(undefined);
+    setIsPlayerDead(false);
+    setGameState('menu');
+  };
 
   return (
     <div className="w-full h-screen bg-black overflow-hidden font-mono relative">
@@ -294,10 +465,7 @@ export default function App() {
           onUpdateSettings={(newSettings) =>
             setProgress((prev) => ({ ...prev, settings: newSettings }))
           }
-          onResetProgress={() => {
-            localStorage.removeItem(LOCAL_STORAGE_KEY);
-            setProgress(DEFAULT_PROGRESS);
-          }}
+          onResetProgress={handleResetProgress}
         />
       )}
 
@@ -315,7 +483,13 @@ export default function App() {
           <div ref={canvasContainerRef} className="w-full h-full cursor-crosshair" />
 
           {/* HUD Overlay */}
-          {hudState && <HUD hud={hudState} onRestartLevel={() => startLevel(activeLevelNumber)} />}
+          {hudState && (
+            <HUD
+              hud={hudState}
+              onRestartLevel={handleRestartLevel}
+              onExitToMenu={handleExitToMenu}
+            />
+          )}
 
           {/* Death Popup Overlay */}
           {isPlayerDead && (
@@ -323,19 +497,27 @@ export default function App() {
               <div className="bg-neutral-900 border border-red-600 rounded-2xl p-8 max-w-md w-full shadow-2xl">
                 <h2 className="text-3xl font-black text-red-500 tracking-wider mb-2">ВЫ ПОГИБЛИ (DESTROYED)</h2>
                 <p className="text-xs text-gray-400 mb-6">ДОМАНЫ ПЕРЕХВАТИЛИ ИНИЦИАТИВУ</p>
-                <div className="flex gap-4">
+                <div className="flex flex-col gap-2.5">
                   <button
                     onClick={() => startLevel(activeLevelNumber)}
-                    className="flex-1 py-3 bg-red-600 hover:bg-red-500 font-black rounded-xl text-white tracking-wider"
+                    className="w-full py-3 bg-red-600 hover:bg-red-500 font-black rounded-xl text-white tracking-wider transition"
                   >
-                    ПОВТОРИТЬ
+                    ПОВТОРИТЬ УРОВЕНЬ
                   </button>
-                  <button
-                    onClick={() => setGameState('level_select')}
-                    className="flex-1 py-3 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 font-bold rounded-xl text-gray-300"
-                  >
-                    МЕНЮ УРОВНЕЙ
-                  </button>
+                  <div className="flex gap-2.5">
+                    <button
+                      onClick={() => setGameState('level_select')}
+                      className="flex-1 py-2.5 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 font-bold rounded-xl text-gray-300 text-xs transition"
+                    >
+                      МЕНЮ УРОВНЕЙ
+                    </button>
+                    <button
+                      onClick={() => setGameState('menu')}
+                      className="flex-1 py-2.5 bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 font-bold rounded-xl text-gray-300 text-xs transition"
+                    >
+                      ГЛАВНОЕ МЕНЮ
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

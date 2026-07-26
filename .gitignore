@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+perf-results/
+dist-standalone/
+saviour-of-domania.html
