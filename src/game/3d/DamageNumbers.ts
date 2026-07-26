@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { ModelBuilder } from './ModelBuilder';
 
 export class DamageNumbers {
   private scene: THREE.Scene;
@@ -20,34 +21,35 @@ export class DamageNumbers {
   constructor(scene: THREE.Scene) {
     this.scene = scene;
 
-    // Pre-render digit materials once during load (0-9 normal & 0-9 crit)
+    // PERF: the digit atlas (21 canvas draws + GPU texture uploads) is built once per
+    // SESSION via the shared material cache, not once per level load/restart. Registering
+    // through ModelBuilder.getMaterial also protects the materials (and their canvas
+    // textures) from level teardown disposal.
     for (let d = 0; d <= 9; d++) {
-      const texNorm = this.createDigitTexture(`${d}`, false);
-      const matNorm = new THREE.SpriteMaterial({
-        map: texNorm,
-        transparent: true,
-        depthTest: false,
-        depthWrite: false,
-      });
-      this.digitMaterialsNormal.push(matNorm);
-
-      const texCrit = this.createDigitTexture(`${d}`, true);
-      const matCrit = new THREE.SpriteMaterial({
-        map: texCrit,
-        transparent: true,
-        depthTest: false,
-        depthWrite: false,
-      });
-      this.digitMaterialsCrit.push(matCrit);
+      this.digitMaterialsNormal.push(
+        ModelBuilder.getMaterial(`dmgnum:d${d}`, () => new THREE.SpriteMaterial({
+          map: this.createDigitTexture(`${d}`, false),
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        })) as THREE.SpriteMaterial
+      );
+      this.digitMaterialsCrit.push(
+        ModelBuilder.getMaterial(`dmgnum:c${d}`, () => new THREE.SpriteMaterial({
+          map: this.createDigitTexture(`${d}`, true),
+          transparent: true,
+          depthTest: false,
+          depthWrite: false,
+        })) as THREE.SpriteMaterial
+      );
     }
 
-    const texCritBadge = this.createCritBadgeTexture();
-    this.critBadgeMaterial = new THREE.SpriteMaterial({
-      map: texCritBadge,
+    this.critBadgeMaterial = ModelBuilder.getMaterial('dmgnum:badge', () => new THREE.SpriteMaterial({
+      map: this.createCritBadgeTexture(),
       transparent: true,
       depthTest: false,
       depthWrite: false,
-    });
+    })) as THREE.SpriteMaterial;
 
     // Pre-allocate pool of 20 DamageNumber Groups
     for (let i = 0; i < 20; i++) {

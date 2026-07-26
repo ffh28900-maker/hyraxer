@@ -4304,53 +4304,49 @@ export class ModelBuilder {
     const group = new THREE.Group();
     group.scale.set(1.8, 1.8, 1.8);
 
+    // PERF/LEAK: shared cached geometry/materials. This factory used to allocate 11 fresh
+    // geometries + 11 fresh materials per grapple press (0.5 s cooldown!) and nothing ever
+    // disposed them once the hook retracted.
     // Central metallic spindle shaft
-    const shaftGeo = new THREE.CylinderGeometry(0.06, 0.08, 0.5, 12);
-    const shaftMat = new THREE.MeshStandardMaterial({
-      color: 0x222222,
-      metalness: 0.95,
-      roughness: 0.15,
-    });
-    const shaft = new THREE.Mesh(shaftGeo, shaftMat);
+    const shaft = new THREE.Mesh(
+      this.getGeo('grapple:shaft', () => new THREE.CylinderGeometry(0.06, 0.08, 0.5, 12)),
+      this.getMaterial('grapple:shaft', () => new THREE.MeshStandardMaterial({ color: 0x222222, metalness: 0.95, roughness: 0.15 }))
+    );
     shaft.rotation.x = Math.PI / 2;
     group.add(shaft);
 
     // Rear cable attachment anchor ring
-    const ringGeo = new THREE.TorusGeometry(0.1, 0.025, 8, 16);
-    const ringMat = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.9 });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
+    const ring = new THREE.Mesh(
+      this.getGeo('grapple:ring', () => new THREE.TorusGeometry(0.1, 0.025, 8, 16)),
+      this.getMaterial('grapple:ring', () => new THREE.MeshStandardMaterial({ color: 0xaaaaaa, metalness: 0.9 }))
+    );
     ring.position.z = 0.25;
     group.add(ring);
 
     // Dark metallic core sphere
-    const coreGeo = new THREE.SphereGeometry(0.1, 12, 12);
-    const coreMat = new THREE.MeshStandardMaterial({
-      color: 0x666666,
-      metalness: 0.9,
-      roughness: 0.2,
-    });
-    const core = new THREE.Mesh(coreGeo, coreMat);
+    const core = new THREE.Mesh(
+      this.getGeo('grapple:core', () => new THREE.SphereGeometry(0.1, 12, 12)),
+      this.getMaterial('grapple:core', () => new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.9, roughness: 0.2 }))
+    );
     group.add(core);
 
     // 4 Curved Steel Claws / Prongs angled outward
+    const armGeo = this.getGeo('grapple:arm', () => new THREE.BoxGeometry(0.03, 0.03, 0.25));
+    const armMat = this.getMaterial('grapple:arm', () => new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.92, roughness: 0.2 }));
+    const tipGeo = this.getGeo('grapple:tip', () => new THREE.ConeGeometry(0.04, 0.18, 4));
+    const tipMat = this.getMaterial('grapple:tip', () => new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.95, roughness: 0.15 }));
     for (let i = 0; i < 4; i++) {
       const angle = (i * Math.PI * 2) / 4;
       const prongGroup = new THREE.Group();
       prongGroup.rotation.z = angle;
 
       // Base arm spreading out
-      const arm = new THREE.Mesh(
-        new THREE.BoxGeometry(0.03, 0.03, 0.25),
-        new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.92, roughness: 0.2 })
-      );
+      const arm = new THREE.Mesh(armGeo, armMat);
       arm.position.set(0, 0.1, -0.1);
       arm.rotation.x = -0.35; // Angle outward
 
       // Sharp barbed hook tip pointing forward
-      const tip = new THREE.Mesh(
-        new THREE.ConeGeometry(0.04, 0.18, 4),
-        new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.95, roughness: 0.15 })
-      );
+      const tip = new THREE.Mesh(tipGeo, tipMat);
       tip.position.set(0, 0.14, -0.25);
       tip.rotation.x = Math.PI / 2 + 0.2; // Curve inwards slightly
 
@@ -4363,58 +4359,58 @@ export class ModelBuilder {
 
   public static createGrappleCableLine(): THREE.Line {
     const points = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 1)];
+    // Geometry stays per-instance (its position attribute is mutated every frame while
+    // the hook flies); the material is shared.
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    const material = new THREE.LineBasicMaterial({
+    const material = this.getMaterial('grapple:cable', () => new THREE.LineBasicMaterial({
       color: 0xaaaaaa,
       linewidth: 3,
-    });
+    }));
     return new THREE.Line(geometry, material);
   }
 
   public static createFlashbangGrenadeMesh(): THREE.Group {
     const group = new THREE.Group();
 
+    // PERF/LEAK: shared cached geometry/materials (was ~10 fresh geo + mat per throw,
+    // never disposed). Only one grenade is airborne at a time, so even the animated LED
+    // material can be shared safely.
     // Steel Canister Body
-    const bodyGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.32, 16);
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: 0x4a4a5a,
-      metalness: 0.8,
-      roughness: 0.3,
-    });
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
-    body.castShadow = true;
+    const body = new THREE.Mesh(
+      this.getGeo('flashbang:body', () => new THREE.CylinderGeometry(0.09, 0.09, 0.32, 16)),
+      this.getMaterial('flashbang:body', () => new THREE.MeshStandardMaterial({ color: 0x4a4a5a, metalness: 0.8, roughness: 0.3 }))
+    );
     group.add(body);
 
     // Purple / Warning Stripes around center
-    const stripeGeo = new THREE.CylinderGeometry(0.092, 0.092, 0.10, 16);
-    const stripeMat = new THREE.MeshStandardMaterial({
-      color: 0x8b5cf6,
-      emissive: 0x6d28d9,
-      emissiveIntensity: 0.6,
-      metalness: 0.5,
-    });
-    const stripe = new THREE.Mesh(stripeGeo, stripeMat);
+    const stripe = new THREE.Mesh(
+      this.getGeo('flashbang:stripe', () => new THREE.CylinderGeometry(0.092, 0.092, 0.10, 16)),
+      this.getMaterial('flashbang:stripe', () => new THREE.MeshStandardMaterial({ color: 0x8b5cf6, emissive: 0x6d28d9, emissiveIntensity: 0.6, metalness: 0.5 }))
+    );
     group.add(stripe);
 
     // Metal Top Cap & Fuse Pin Mechanism
-    const capGeo = new THREE.CylinderGeometry(0.06, 0.08, 0.08, 12);
-    const capMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.9, roughness: 0.2 });
-    const cap = new THREE.Mesh(capGeo, capMat);
+    const cap = new THREE.Mesh(
+      this.getGeo('flashbang:cap', () => new THREE.CylinderGeometry(0.06, 0.08, 0.08, 12)),
+      this.getMaterial('flashbang:cap', () => new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.9, roughness: 0.2 }))
+    );
     cap.position.y = 0.18;
     group.add(cap);
 
     // Safety Pin Pull Ring
-    const ringGeo = new THREE.TorusGeometry(0.035, 0.008, 8, 12);
-    const ringMat = new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.95 });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
+    const ring = new THREE.Mesh(
+      this.getGeo('flashbang:ring', () => new THREE.TorusGeometry(0.035, 0.008, 8, 12)),
+      this.getMaterial('flashbang:ring', () => new THREE.MeshStandardMaterial({ color: 0xe2e8f0, metalness: 0.95 }))
+    );
     ring.position.set(0.06, 0.21, 0);
     ring.rotation.y = Math.PI / 2;
     group.add(ring);
 
     // Glowing Blinking Fuse LED Top Dot
-    const ledGeo = new THREE.SphereGeometry(0.025, 8, 8);
-    const ledMat = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true });
-    const led = new THREE.Mesh(ledGeo, ledMat);
+    const led = new THREE.Mesh(
+      this.getGeo('flashbang:led', () => new THREE.SphereGeometry(0.025, 8, 8)),
+      this.getMaterial('flashbang:led', () => new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true }))
+    );
     led.name = 'flashbang_led';
     led.position.set(0, 0.23, 0);
     group.add(led);

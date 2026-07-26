@@ -107,6 +107,18 @@ export class GameEngine {
   private activeGrenadeLed: THREE.Mesh | null = null;
   /** Frame-clocked auto punch release for the HVB quick-punch (replaces a setTimeout). */
   private pendingAutoPunchRelease = 0;
+  /**
+   * PERF: gadget meshes built once and reused for the whole session. They used to be
+   * rebuilt from scratch on every grapple press / grenade throw / coin toss and removed
+   * without disposal. Their geometry/materials come from ModelBuilder's shared caches, so
+   * level teardown never disposes them either.
+   */
+  private cachedGrappleHookMesh: THREE.Group | null = null;
+  private cachedGrappleCableLine: THREE.Line | null = null;
+  private cachedGrenadeMesh: THREE.Group | null = null;
+  private cachedCoinMesh: THREE.Mesh | null = null;
+  /** Weapon viewmodels built once per weapon per session (were rebuilt+leaked per switch). */
+  private weaponMeshCache = new Map<WeaponId, THREE.Group>();
   // Scratch vectors for updateGrappleHook (were per-frame allocations)
   private tempGrappleOrigin = new THREE.Vector3();
   private tempGrapplePull = new THREE.Vector3();
@@ -385,8 +397,14 @@ export class GameEngine {
       this.viewmodelGroup.remove(this.viewmodelGroup.children[0]);
     }
 
-    // Create new detailed weapon mesh with hands
-    const weaponMesh = ModelBuilder.createWeaponMesh(this.player.currentWeapon);
+    // PERF: build each weapon's viewmodel once per session and re-attach on switch.
+    // createWeaponMesh assembles ~115 meshes/~45 materials - rebuilding (and never
+    // disposing) it on every switch leaked all of that each time.
+    let weaponMesh = this.weaponMeshCache.get(this.player.currentWeapon);
+    if (!weaponMesh) {
+      weaponMesh = ModelBuilder.createWeaponMesh(this.player.currentWeapon);
+      this.weaponMeshCache.set(this.player.currentWeapon, weaponMesh);
+    }
     this.viewmodelGroup.add(weaponMesh);
     this.activeWeaponId = this.player.currentWeapon;
 
@@ -825,10 +843,15 @@ export class GameEngine {
     if (skill.coinToss) {
       this.addStylePoints(150, 'COIN TOSS TRICK');
 
-      // Spawn 3D Shiny Coin in front of camera
-      const coinGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.02, 16);
-      const coinMat = new THREE.MeshBasicMaterial({ color: 0xffd700 });
-      this.activeCoinMesh = new THREE.Mesh(coinGeo, coinMat);
+      // Spawn the session-cached 3D Shiny Coin in front of camera (was a fresh
+      // geometry+material per toss, removed without disposal)
+      if (!this.cachedCoinMesh) {
+        this.cachedCoinMesh = new THREE.Mesh(
+          ModelBuilder.getGeo('coin:disc', () => new THREE.CylinderGeometry(0.08, 0.08, 0.02, 16)),
+          ModelBuilder.getMaterial('coin:disc', () => new THREE.MeshBasicMaterial({ color: 0xffd700 }))
+        );
+      }
+      this.activeCoinMesh = this.cachedCoinMesh;
 
       const forward = new THREE.Vector3();
       this.player.camera.getWorldDirection(forward);
@@ -845,7 +868,9 @@ export class GameEngine {
         this.activeGrenadeMesh = null;
       }
 
-      const grenadeGroup = ModelBuilder.createFlashbangGrenadeMesh();
+      if (!this.cachedGrenadeMesh) this.cachedGrenadeMesh = ModelBuilder.createFlashbangGrenadeMesh();
+      const grenadeGroup = this.cachedGrenadeMesh;
+      grenadeGroup.rotation.set(0, 0, 0);
       this.activeGrenadeMesh = grenadeGroup as unknown as THREE.Mesh;
       // PERF: resolve the LED once per throw instead of getObjectByName per frame.
       this.activeGrenadeLed = (grenadeGroup.getObjectByName('flashbang_led') as THREE.Mesh) ?? null;
@@ -926,13 +951,15 @@ export class GameEngine {
     if (this.activeGrappleHookMesh) this.levelData.scene.remove(this.activeGrappleHookMesh);
     if (this.activeGrappleCableLine) this.levelData.scene.remove(this.activeGrappleCableLine);
 
-    // Spawn 3D Grapple Hook projectile & glowing cable
-    this.activeGrappleHookMesh = ModelBuilder.createGrappleHookMesh();
+    // Reuse the session-cached 3D Grapple Hook projectile & glowing cable
+    if (!this.cachedGrappleHookMesh) this.cachedGrappleHookMesh = ModelBuilder.createGrappleHookMesh();
+    this.activeGrappleHookMesh = this.cachedGrappleHookMesh;
     this.activeGrappleHookMesh.position.copy(origin);
     this.activeGrappleHookMesh.lookAt(origin.clone().add(forward));
     this.levelData.scene.add(this.activeGrappleHookMesh);
 
-    this.activeGrappleCableLine = ModelBuilder.createGrappleCableLine();
+    if (!this.cachedGrappleCableLine) this.cachedGrappleCableLine = ModelBuilder.createGrappleCableLine();
+    this.activeGrappleCableLine = this.cachedGrappleCableLine;
     // The cable endpoints move every frame while its bounding sphere is computed once from
     // the placeholder points, so frustum culling would hide it incorrectly.
     this.activeGrappleCableLine.frustumCulled = false;
@@ -1251,6 +1278,11 @@ export class GameEngine {
     this.damageTaken += dmg;
     if (this.player.isDead) {
       this.onPlayerDeath();
+      // PERF: nothing changes on screen behind the death overlay, yet the loop used to
+      // keep rendering the whole scene at 60 fps indefinitely. Freeze the loop (the last
+      // frame stays on the canvas, music keeps playing); restart builds a fresh engine
+      // via sessionNonce and calls start().
+      this.isRunning = false;
     }
   };
 
@@ -1669,7 +1701,7 @@ export class GameEngine {
       this.damageNumbers.clear();
     }
     if (this.hitSplashes) {
-      this.hitSplashes.clear();
+      this.hitSplashes.destroy();
     }
     if (this.tracers) {
       this.tracers.destroy();
@@ -1681,10 +1713,10 @@ export class GameEngine {
       this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
     }
     this.renderer.dispose();
+    // Browsers cap live WebGL contexts (~16); every level start/restart builds a fresh
+    // renderer, so without an explicit context loss long sessions hit "oldest context
+    // will be lost" and the game goes black.
+    this.renderer.forceContextLoss();
   }
-}
-
-function recoilZPosition(recoilZ: number): number {
-  return -recoilZ;
 }
 

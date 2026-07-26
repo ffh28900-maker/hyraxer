@@ -60,10 +60,16 @@ export default function App() {
 
   const canvasContainerRef = useRef<HTMLDivElement | null>(null);
   const gameEngineRef = useRef<GameEngine | null>(null);
+  // PERF: the engine effect reads progress through a ref so weapon unlocks don't appear in
+  // its dependency list - a new unlockedWeapons object identity used to tear down and
+  // rebuild the ENTIRE engine (full level regeneration) while the victory modal was open.
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
 
   // Developer Cheat Codes ('god', 'dick', 'вшсл')
   useEffect(() => {
     let keyBuffer = '';
+    let cheatMsgTimeout: number | undefined;
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
@@ -101,7 +107,8 @@ export default function App() {
           AudioEngine.playCoinToss();
           setCheatMessage('GOD MODE ACTIVATED — ВСЕ 17 УРОВНЕЙ И АРСЕНАЛ РАЗБЛОКИРОВАНЫ!');
 
-          setTimeout(() => {
+          window.clearTimeout(cheatMsgTimeout);
+          cheatMsgTimeout = window.setTimeout(() => {
             setCheatMessage(null);
           }, 3500);
         }
@@ -111,7 +118,8 @@ export default function App() {
           AudioEngine.playCoinToss();
           setCheatMessage('⚡ СЕКРЕТНАЯ ВЫСТАВКА ВСЕХ МОБОВ И БОССОВ ОТКРЫТА! ⚡');
 
-          setTimeout(() => {
+          window.clearTimeout(cheatMsgTimeout);
+          cheatMsgTimeout = window.setTimeout(() => {
             setCheatMessage(null);
           }, 4000);
 
@@ -121,7 +129,10 @@ export default function App() {
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.clearTimeout(cheatMsgTimeout);
+    };
   }, []);
 
   // Save Progress
@@ -178,16 +189,11 @@ export default function App() {
         setLevelResult(result);
         if (unlockedNewWeapon) {
           setUnlockedWeaponBanner(unlockedNewWeapon);
-          setProgress((prev) => ({
-            ...prev,
-            unlockedWeapons: {
-              ...prev.unlockedWeapons,
-              [unlockedNewWeapon]: true,
-            },
-          }));
         }
 
-        // Save Completed Level Result
+        // Save weapon unlock + completed level result in ONE update (two back-to-back
+        // setProgress calls used to run the persistence effect - and its synchronous
+        // localStorage JSON write - twice per level completion).
         setProgress((prev) => {
           const prevRes = prev.completedLevels[activeLevelNumber];
           let bestRank: RankGrade = result.rank;
@@ -195,6 +201,9 @@ export default function App() {
 
           return {
             ...prev,
+            unlockedWeapons: unlockedNewWeapon
+              ? { ...prev.unlockedWeapons, [unlockedNewWeapon]: true }
+              : prev.unlockedWeapons,
             completedLevels: {
               ...prev.completedLevels,
               [activeLevelNumber]: {
@@ -218,17 +227,18 @@ export default function App() {
     const effectiveUnlockedWeapons = {
       peacemaker: true,
       grapple: true,
-      trembler: Boolean(progress.unlockedWeapons?.trembler),
-      punisher: Boolean(progress.unlockedWeapons?.punisher),
+      trembler: Boolean(progressRef.current.unlockedWeapons?.trembler),
+      punisher: Boolean(progressRef.current.unlockedWeapons?.punisher),
     };
     engine.loadLevel(activeLevelNumber, effectiveUnlockedWeapons);
     engine.start();
 
-    // PointerLock
+    // PointerLock (element captured for cleanup - the ref may already be null then)
+    const containerEl = canvasContainerRef.current;
     const handleCanvasClick = () => {
       safeRequestPointerLock(canvasContainerRef.current);
     };
-    canvasContainerRef.current.addEventListener('click', handleCanvasClick);
+    containerEl.addEventListener('click', handleCanvasClick);
 
     const handlePointerLockError = (e: Event) => {
       e.stopPropagation();
@@ -341,11 +351,24 @@ export default function App() {
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('contextmenu', handleContextMenu);
       document.removeEventListener('pointerlockerror', handlePointerLockError);
-      canvasContainerRef.current?.removeEventListener('click', handleCanvasClick);
+      containerEl.removeEventListener('click', handleCanvasClick);
       engine.destroy();
       gameEngineRef.current = null;
     };
-  }, [gameState, activeLevelNumber, progress.unlockedWeapons, sessionNonce]);
+  }, [gameState, activeLevelNumber, sessionNonce]);
+
+  // Keep a live engine's weapon unlocks in sync (e.g. the god cheat) without rebuilding it.
+  useEffect(() => {
+    const engine = gameEngineRef.current;
+    if (engine && engine.player) {
+      engine.player.unlockedWeapons = {
+        peacemaker: true,
+        grapple: true,
+        trembler: Boolean(progress.unlockedWeapons?.trembler),
+        punisher: Boolean(progress.unlockedWeapons?.punisher),
+      };
+    }
+  }, [progress.unlockedWeapons]);
 
   const handleResetProgress = () => {
     try {

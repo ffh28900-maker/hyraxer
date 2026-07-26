@@ -2280,32 +2280,36 @@ export class EnemyEngine {
     isToxic: boolean = false,
     isWeb: boolean = false
   ) {
-    const geo = new THREE.SphereGeometry(isToxic ? 0.35 : (isWeb ? 0.38 : 0.25), 8, 8);
-    let mat: THREE.Material;
-    if (isToxic) {
-      mat = new THREE.MeshBasicMaterial({ color: 0x10b981 });
-    } else if (isWeb) {
-      mat = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
-    } else {
-      mat = new THREE.MeshBasicMaterial({ color: 0xff0044 });
-    }
+    // PERF/LEAK: geometries & materials come from the shared cross-level caches. Fresh
+    // ones per shot were never disposed on projectile removal, leaking GPU buffers at up
+    // to ~8/sec during minigun boss fights.
+    const geo = ModelBuilder.getGeo(
+      isToxic ? 'proj:sphere:0.35' : isWeb ? 'proj:sphere:0.38' : 'proj:sphere:0.25',
+      () => new THREE.SphereGeometry(isToxic ? 0.35 : (isWeb ? 0.38 : 0.25), 8, 8)
+    );
+    const mat = ModelBuilder.getMaterial(
+      isToxic ? 'proj:mat:toxic' : isWeb ? 'proj:mat:web' : 'proj:mat:plain',
+      () => new THREE.MeshBasicMaterial({ color: isToxic ? 0x10b981 : isWeb ? 0x22d3ee : 0xff0044 })
+    );
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.copy(from);
 
     if (isToxic) {
-      const auraGeo = new THREE.SphereGeometry(0.52, 8, 8);
-      const auraMat = new THREE.MeshBasicMaterial({ color: 0xa7f3d0, transparent: true, opacity: 0.5 });
-      const aura = new THREE.Mesh(auraGeo, auraMat);
+      const aura = new THREE.Mesh(
+        ModelBuilder.getGeo('proj:sphere:0.52', () => new THREE.SphereGeometry(0.52, 8, 8)),
+        ModelBuilder.getMaterial('proj:mat:aura', () => new THREE.MeshBasicMaterial({ color: 0xa7f3d0, transparent: true, opacity: 0.5 }))
+      );
       mesh.add(aura);
     } else if (isWeb) {
+      const webRingGeo = ModelBuilder.getGeo('proj:torus:0.5', () => new THREE.TorusGeometry(0.5, 0.04, 6, 12));
       const webRing1 = new THREE.Mesh(
-        new THREE.TorusGeometry(0.5, 0.04, 6, 12),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })
+        webRingGeo,
+        ModelBuilder.getMaterial('proj:mat:webring1', () => new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 }))
       );
       mesh.add(webRing1);
       const webRing2 = new THREE.Mesh(
-        new THREE.TorusGeometry(0.5, 0.04, 6, 12),
-        new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.85 })
+        webRingGeo,
+        ModelBuilder.getMaterial('proj:mat:webring2', () => new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.85 }))
       );
       webRing2.rotation.x = Math.PI / 2;
       mesh.add(webRing2);
@@ -2328,31 +2332,36 @@ export class EnemyEngine {
   public spawnEnemyRocket(from: THREE.Vector3, to: THREE.Vector3, speed: number = 12, damage: number = 10) {
     const group = new THREE.Group();
 
+    // PERF/LEAK: shared cached geometry/materials (6 fresh geo + 6 fresh mat per rocket
+    // used to leak on removal - scene.remove never disposed them).
     // Metallic rocket body
-    const bodyGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.52, 8);
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8, roughness: 0.2 });
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
+    const body = new THREE.Mesh(
+      ModelBuilder.getGeo('rocket:body', () => new THREE.CylinderGeometry(0.08, 0.08, 0.52, 8)),
+      ModelBuilder.getMaterial('rocket:body', () => new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.8, roughness: 0.2 }))
+    );
     body.rotation.x = Math.PI / 2;
     group.add(body);
 
     // Crimson conical warhead tip
-    const tipGeo = new THREE.ConeGeometry(0.085, 0.22, 8);
-    const tipMat = new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.2, metalness: 0.7 });
-    const tip = new THREE.Mesh(tipGeo, tipMat);
+    const tip = new THREE.Mesh(
+      ModelBuilder.getGeo('rocket:tip', () => new THREE.ConeGeometry(0.085, 0.22, 8)),
+      ModelBuilder.getMaterial('rocket:tip', () => new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.2, metalness: 0.7 }))
+    );
     tip.rotation.x = Math.PI / 2;
     tip.position.z = 0.35;
     group.add(tip);
 
     // Hazard ring at warhead base
-    const ringGeo = new THREE.TorusGeometry(0.085, 0.012, 6, 12);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
-    const ring = new THREE.Mesh(ringGeo, ringMat);
+    const ring = new THREE.Mesh(
+      ModelBuilder.getGeo('rocket:ring', () => new THREE.TorusGeometry(0.085, 0.012, 6, 12)),
+      ModelBuilder.getMaterial('rocket:ring', () => new THREE.MeshBasicMaterial({ color: 0xfacc15 }))
+    );
     ring.position.z = 0.24;
     group.add(ring);
 
     // Tail fins
-    const finGeo = new THREE.BoxGeometry(0.015, 0.18, 0.14);
-    const finMat = new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9, roughness: 0.2 });
+    const finGeo = ModelBuilder.getGeo('rocket:fin', () => new THREE.BoxGeometry(0.015, 0.18, 0.14));
+    const finMat = ModelBuilder.getMaterial('rocket:fin', () => new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9, roughness: 0.2 }));
     for (let f = 0; f < 4; f++) {
       const fin = new THREE.Mesh(finGeo, finMat);
       fin.rotation.z = (f * Math.PI) / 2;
@@ -2361,9 +2370,10 @@ export class EnemyEngine {
     }
 
     // Exhaust Thruster Glow
-    const glowGeo = new THREE.SphereGeometry(0.09, 8, 8);
-    const glowMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
-    const glow = new THREE.Mesh(glowGeo, glowMat);
+    const glow = new THREE.Mesh(
+      ModelBuilder.getGeo('rocket:glow', () => new THREE.SphereGeometry(0.09, 8, 8)),
+      ModelBuilder.getMaterial('rocket:glow', () => new THREE.MeshBasicMaterial({ color: 0xffaa00 }))
+    );
     glow.position.z = -0.28;
     group.add(glow);
 
@@ -2384,9 +2394,10 @@ export class EnemyEngine {
   }
 
   public spawnDynamiteBundle(from: THREE.Vector3, to: THREE.Vector3) {
-    const geo = new THREE.CylinderGeometry(0.15, 0.15, 0.6);
-    const mat = new THREE.MeshBasicMaterial({ color: 0xff3300 });
-    const mesh = new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Mesh(
+      ModelBuilder.getGeo('proj:dynamite', () => new THREE.CylinderGeometry(0.15, 0.15, 0.6)),
+      ModelBuilder.getMaterial('proj:dynamite', () => new THREE.MeshBasicMaterial({ color: 0xff3300 }))
+    );
     mesh.position.copy(from);
     this.scene.add(mesh);
 
