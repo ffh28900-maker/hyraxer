@@ -100,6 +100,17 @@ export class GameEngine {
   private tempSpreadDir = new THREE.Vector3();
   private cachedLevelMeshes: THREE.Object3D[] | null = null;
   private nearMeshesTemp: THREE.Object3D[] = [];
+  /**
+   * PERF: level meshes within reach of the player, rebuilt only after the player has moved
+   * a few metres. Every shot and every grapple press used to walk the FULL static mesh list
+   * (thousands of entries once the mine/hell props landed) and the grapple then raycast all
+   * of them - that scan is exactly the micro-freeze felt when firing or grappling.
+   */
+  private nearPlayerMeshes: THREE.Object3D[] = [];
+  private nearPlayerMeshesOrigin = new THREE.Vector3(Infinity, Infinity, Infinity);
+  private nearPlayerMeshesSource: THREE.Object3D[] | null = null;
+  private static readonly NEAR_MESH_RADIUS = 48;
+  private static readonly NEAR_MESH_REFRESH_DIST_SQ = 25; // rebuild after ~5m of travel
   /** Muzzle refs resolved once per weapon switch (were getObjectByName'd every frame). */
   private muzzleFlashMesh: THREE.Mesh | null = null;
   private muzzleFlashLight: THREE.PointLight | null = null;
@@ -934,6 +945,7 @@ export class GameEngine {
     let minDistance = 35;
     for (const enemy of this.enemies.enemies) {
       if (enemy.isDead || !enemy.mesh) continue;
+      if (enemy.isBoss) continue; // Bosses cannot be reeled in
       const enemyCenter = enemy.position.clone();
       enemyCenter.y += 0.5;
 
@@ -949,7 +961,9 @@ export class GameEngine {
 
     // 2. If no enemy targeted, raycast against solid level environment
     if (!hitEnemy && this.levelData && this.levelData.scene) {
-      const candidates = this.getStaticLevelMeshes();
+      // PERF: this used to raycast EVERY static mesh in the level (thousands once the
+      // mine/hell props landed), which is the hitch felt on each grapple press.
+      const candidates = this.getNearPlayerMeshes();
 
       try {
         const intersects = raycaster.intersectObjects(candidates, false);
@@ -1066,11 +1080,10 @@ export class GameEngine {
         const distToPlayer = pullDir.length();
 
         if (distToPlayer <= 2.8) {
-          // Enemy arrived right in front of player! Release and hover stunned!
+          // Enemy arrived right in front of the player. It gets a small upward float so it
+          // is easy to follow up on, but it is NOT stunned - it can act immediately.
           enemy.position.y = Math.max(enemy.position.y, origin.y - 0.2);
-          enemy.knockbackVel = new THREE.Vector3(0, 5.0, 0); // Upward float for easy punch/headshot
-          enemy.isStunned = true;
-          enemy.stunTimer = 1.5;
+          enemy.knockbackVel = new THREE.Vector3(0, 5.0, 0);
 
           state.phase = 'retracting';
           this.player.isGrappling = false;
@@ -1081,8 +1094,6 @@ export class GameEngine {
           const pullSpeed = 42.0; // Rapid pull speed
           enemy.position.addScaledVector(pullDir, pullSpeed * delta);
           enemy.position.y = Math.max(enemy.position.y, 1.2); // Elevate slightly off ground during pull
-          enemy.isStunned = true;
-          enemy.stunTimer = 1.5;
           if (enemy.knockbackVel) enemy.knockbackVel.set(0, 0, 0); // Prevent floor friction from interfering
         }
       }
@@ -1434,6 +1445,44 @@ export class GameEngine {
     }
   }
 
+  /**
+   * Level meshes whose bounding sphere is within NEAR_MESH_RADIUS of the player, cached
+   * across frames. Conservative superset: geometry outside this radius cannot be hit by a
+   * 35-45m weapon/grapple ray fired from the player.
+   */
+  private getNearPlayerMeshes(): THREE.Object3D[] {
+    const all = this.getStaticLevelMeshes();
+    const pos = this.player.position;
+    if (
+      this.nearPlayerMeshesSource === all &&
+      pos.distanceToSquared(this.nearPlayerMeshesOrigin) < GameEngine.NEAR_MESH_REFRESH_DIST_SQ
+    ) {
+      return this.nearPlayerMeshes;
+    }
+
+    this.nearPlayerMeshesSource = all;
+    this.nearPlayerMeshesOrigin.copy(pos);
+    this.nearPlayerMeshes.length = 0;
+
+    // Radius plus the travel slack, so the set stays valid until the next rebuild.
+    const reach = GameEngine.NEAR_MESH_RADIUS + 6;
+    const reachSq = reach * reach;
+    for (let i = 0; i < all.length; i++) {
+      const obj = all[i];
+      const geo = (obj as THREE.Mesh).geometry;
+      let radius = 0;
+      if (geo) {
+        if (!geo.boundingSphere) geo.computeBoundingSphere();
+        if (geo.boundingSphere) radius = geo.boundingSphere.radius;
+      }
+      const d = obj.position.distanceToSquared(pos);
+      if (d <= (reach + radius) * (reach + radius) || d <= reachSq) {
+        this.nearPlayerMeshes.push(obj);
+      }
+    }
+    return this.nearPlayerMeshes;
+  }
+
   private getStaticLevelMeshes(): THREE.Object3D[] {
     if (!this.cachedLevelMeshes && this.levelData && this.levelData.scene) {
       this.cachedLevelMeshes = [];
@@ -1580,14 +1629,9 @@ export class GameEngine {
     this.tempTracerEnd.copy(camPos).addScaledVector(this.shootDir, 45.0);
 
     if (this.levelData && this.levelData.scene) {
-      const levelMeshes = this.getStaticLevelMeshes();
-      this.nearMeshesTemp.length = 0;
-      for (let i = 0; i < levelMeshes.length; i++) {
-        if (levelMeshes[i].position.distanceToSquared(camPos) < 1600) {
-          this.nearMeshesTemp.push(levelMeshes[i]);
-        }
-      }
-      const targets = this.nearMeshesTemp.length > 0 ? this.nearMeshesTemp : levelMeshes;
+      // PERF: cached near set (rebuilt only after the player travels ~5m) instead of a
+      // full rescan of every static mesh on every single shot.
+      const targets = this.getNearPlayerMeshes();
       try {
         const hits = this.shootRaycaster.intersectObjects(targets, false);
         if (hits && hits.length > 0) {

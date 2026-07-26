@@ -4108,12 +4108,12 @@ export class EnemyEngine {
     const range = 6.0 + chargeRatio * 6.0;
     const damage = 1 + chargeRatio * 3; // Minimal damage so mobs ricochet smoothly!
     const launchSpeed = 8 + chargeRatio * 32; // Controlled, readable speed
-    const stunTime = 0.3 + chargeRatio * 0.2; // Fast 0.3 - 0.5s recovery
 
     let hitAny = false;
 
     for (const enemy of this.enemies) {
       if (enemy.isDead) continue;
+      if (enemy.isBoss) continue; // Bosses cannot be punched around
       const dist = enemy.position.distanceTo(playerPos);
       if (dist <= range) {
         hitAny = true;
@@ -4127,11 +4127,11 @@ export class EnemyEngine {
         launchDir.y = Math.max(0.20, launchDir.y + 0.30);
         launchDir.normalize();
 
+        // The punch THROWS the enemy - it stays conscious and keeps acting once it lands,
+        // so juggling is about the physics, not about a knockout lock.
         enemy.knockbackVel = launchDir.multiplyScalar(launchSpeed);
         enemy.ricochetBounces = 0;
         enemy.hp -= damage;
-        enemy.isStunned = true;
-        enemy.stunTimer = stunTime;
 
         if (this.onDamageNumber) {
           this.onDamageNumber(enemy.position, Math.round(damage), chargeRatio >= 0.7);
