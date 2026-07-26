@@ -3453,55 +3453,643 @@ export class ModelBuilder {
       }
 
       case 'boss_miner': {
-        // Heavy industrial excavator titan with massive drill arm, steam exhaust & hardhat dome
-        const bodyGeo = this.getGeo('box_2.4_3.0_2.0', () => new THREE.BoxGeometry(2.4, 3.0, 2.0));
-        const bodyMat = this.getMaterial('boss_miner_body', () => new THREE.MeshStandardMaterial({ color: 0x38220f, emissive: 0xff6600, emissiveIntensity: 0.7, roughness: 0.3 }));
-        const body = new THREE.Mesh(bodyGeo, bodyMat);
-        body.position.y = 2.2;
-        group.add(body);
+        // --- CHAPTER 3 BOSS: "ШАХТЁР-ДОМАН (БРОСАЕТ ТНТ)" ---
+        // A huge, heavily muscled hyrax miner standing in the tunnel: worn canvas overalls with
+        // shoulder straps / buckles / patches, bare musclebound arms, a battered yellow-orange
+        // hardhat with a burning headlamp, a thick tool belt with pouches and a hanging pickaxe,
+        // heavy steel-toed boots and a fist full of lit dynamite. ~5.7 units tall.
+        //
+        // Animated parts (see EnemyEngine): 'boss_miner_arm' (throwing shoulder pivot),
+        // 'boss_miner_tnt' (the lit bundle it holds), 'leg_FL' / 'leg_FR' (hip pivots),
+        // 'boss_mouth_jaw' (lower jaw). Everything else is static and gets frozen by the engine.
+        const addM = (parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
+          const m = new THREE.Mesh(geo, mat);
+          m.position.set(x, y, z);
+          parent.add(m);
+          return m;
+        };
 
-        // Massive Rotary Drill Arm (Right)
-        const drillArmGeo = this.getGeo('cyl_0.4_0.4_2.0_10', () => new THREE.CylinderGeometry(0.4, 0.4, 2.0, 10));
-        const drillArm = new THREE.Mesh(drillArmGeo, metalMat);
-        drillArm.rotation.x = Math.PI / 2;
-        drillArm.position.set(1.8, 2.2, 1.0);
-        group.add(drillArm);
+        // --- MATERIALS (all shared through the static cache) ---
+        const skinMat = this.getMaterial('bmin:skin', () => new THREE.MeshStandardMaterial({ color: 0x7d4c25, roughness: 0.72, metalness: 0.04 }));
+        const skinDarkMat = this.getMaterial('bmin:skin_dark', () => new THREE.MeshStandardMaterial({ color: 0x5a3517, roughness: 0.8, metalness: 0.04 }));
+        const chestFurMat = this.getMaterial('bmin:chest_fur', () => new THREE.MeshStandardMaterial({ color: 0xc8ac86, roughness: 0.9, metalness: 0.0 }));
+        const canvasMat = this.getMaterial('bmin:canvas', () => new THREE.MeshStandardMaterial({ color: 0x6d5b3c, roughness: 0.94, metalness: 0.0 }));
+        const canvasDarkMat = this.getMaterial('bmin:canvas_dark', () => new THREE.MeshStandardMaterial({ color: 0x473a25, roughness: 0.95, metalness: 0.0 }));
+        const patchMat = this.getMaterial('bmin:patch', () => new THREE.MeshStandardMaterial({ color: 0x8a7750, roughness: 0.96, metalness: 0.0 }));
+        const leatherMat = this.getMaterial('bmin:leather', () => new THREE.MeshStandardMaterial({ color: 0x36251a, roughness: 0.8, metalness: 0.06 }));
+        const brassMat = this.getMaterial('bmin:brass', () => new THREE.MeshStandardMaterial({ color: 0xb98b31, roughness: 0.3, metalness: 0.9 }));
+        const hatMat = this.getMaterial('bmin:hat', () => new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.5, metalness: 0.18 }));
+        const hatDarkMat = this.getMaterial('bmin:hat_dark', () => new THREE.MeshStandardMaterial({ color: 0x99500a, roughness: 0.6, metalness: 0.18 }));
+        const lampLensMat = this.getMaterial('bmin:lamp_lens', () => new THREE.MeshBasicMaterial({ color: 0xfff4cc }));
+        const lampConeMat = this.getMaterial('bmin:lamp_cone', () => new THREE.MeshBasicMaterial({
+          color: 0xffe9a8, transparent: true, opacity: 0.15, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+        }));
+        const tntMat = this.getMaterial('bmin:tnt', () => new THREE.MeshStandardMaterial({ color: 0xb31212, roughness: 0.72, metalness: 0.02 }));
+        const tntBandMat = this.getMaterial('bmin:tnt_band', () => new THREE.MeshStandardMaterial({ color: 0x6b0f0f, roughness: 0.7 }));
+        const fuseMat = this.getMaterial('bmin:fuse', () => new THREE.MeshStandardMaterial({ color: 0xcbb98e, roughness: 0.9 }));
+        const sparkMat = this.getMaterial('bmin:spark', () => new THREE.MeshBasicMaterial({ color: 0xfff8d0 }));
+        const sparkHaloMat = this.getMaterial('bmin:spark_halo', () => new THREE.MeshBasicMaterial({
+          color: 0xff9a2b, transparent: true, opacity: 0.42, depthWrite: false, blending: THREE.AdditiveBlending,
+        }));
+        const tuskMat = this.getMaterial('bmin:tusk', () => new THREE.MeshStandardMaterial({ color: 0xf2ecd8, roughness: 0.35 }));
+        const eyeDarkMat = this.getMaterial('bmin:eye_dark', () => new THREE.MeshStandardMaterial({ color: 0x100a06, roughness: 0.08 }));
+        const pupilMat = this.getMaterial('bmin:pupil', () => new THREE.MeshBasicMaterial({ color: 0xfcb62c }));
+        const minerNoseMat = this.getMaterial('nose_black', () => new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.1 }));
+        const minerWhiskerMat = this.getMaterial('bmin:whisker', () => new THREE.MeshBasicMaterial({ color: 0x1a1512 }));
+        const earPinkMat = this.getMaterial('ear_pink', () => new THREE.MeshStandardMaterial({ color: 0xf472b6, roughness: 0.6 }));
 
-        const drillHeadGeo = this.getGeo('cone_0.7_1.8_12', () => new THREE.ConeGeometry(0.7, 1.8, 12));
-        const drillHead = new THREE.Mesh(drillHeadGeo, metalMat);
-        drillHead.rotation.x = Math.PI / 2;
-        drillHead.position.set(1.8, 2.2, 2.4);
-        group.add(drillHead);
+        // --- 1. LEGS: hip-pivot groups with knee-patched trousers and steel-toed boots ---
+        const thighGeo = this.getGeo('bmin:thigh', () => new THREE.CapsuleGeometry(0.38, 0.7, 8, 12));
+        const kneePatchGeo = this.getGeo('bmin:knee_patch', () => new THREE.BoxGeometry(0.66, 0.36, 0.62));
+        const shinGeo = this.getGeo('bmin:shin', () => new THREE.CapsuleGeometry(0.3, 0.6, 8, 10));
+        const cuffGeo = this.getGeo('bmin:cuff', () => new THREE.CylinderGeometry(0.37, 0.34, 0.26, 12));
+        const bootGeo = this.getGeo('bmin:boot', () => new THREE.BoxGeometry(0.62, 0.36, 0.92));
+        const soleGeo = this.getGeo('bmin:sole', () => new THREE.BoxGeometry(0.68, 0.14, 1.0));
+        const toeCapGeo = this.getGeo('bmin:toecap', () => new THREE.BoxGeometry(0.58, 0.22, 0.28));
+        const laceGeo = this.getGeo('bmin:lace', () => new THREE.BoxGeometry(0.5, 0.05, 0.06));
+        for (const [legName, lsx] of [['leg_FL', -1], ['leg_FR', 1]] as const) {
+          const hip = new THREE.Group();
+          hip.name = legName;
+          hip.position.set(lsx * 0.62, 2.3, 0);
+          group.add(hip);
 
-        // Giant Excavator Shield (Left)
-        const shieldGeo = this.getGeo('box_1.6_2.5_0.3', () => new THREE.BoxGeometry(1.6, 2.5, 0.3));
-        const shield = new THREE.Mesh(shieldGeo, hazardMat);
-        shield.position.set(-1.8, 2.2, 1.2);
-        group.add(shield);
+          addM(hip, thighGeo, canvasMat, 0, -0.5, 0).castShadow = true;
+          addM(hip, kneePatchGeo, canvasDarkMat, 0, -0.98, 0.06);
+          addM(hip, shinGeo, canvasMat, 0, -1.4, 0.02);
+          addM(hip, cuffGeo, canvasDarkMat, 0, -1.8, 0.04);
+          addM(hip, bootGeo, leatherMat, 0, -2.06, 0.12);
+          addM(hip, soleGeo, canvasDarkMat, 0, -2.26, 0.14);
+          addM(hip, toeCapGeo, metalMat, 0, -2.08, 0.52);
+          addM(hip, laceGeo, leatherMat, 0, -1.9, 0.5);
+        }
+
+        // --- 2. HIPS + TORSO: bulk core, pecs, lats, chest fur ---
+        addM(group, this.getGeo('bmin:pelvis', () => new THREE.BoxGeometry(1.54, 0.72, 0.98)), canvasMat, 0, 2.58, 0);
+        const torso = addM(group, this.getGeo('bmin:torso', () => new THREE.CapsuleGeometry(0.72, 0.8, 10, 16)), skinMat, 0, 3.44, 0);
+        torso.scale.set(1.16, 1.0, 0.86);
+        torso.castShadow = true;
+
+        const pecGeo = this.getGeo('bmin:pec', () => new THREE.SphereGeometry(0.42, 12, 12));
+        const latGeo = this.getGeo('bmin:lat', () => new THREE.SphereGeometry(0.44, 12, 12));
+        for (const side of [-1, 1]) {
+          const pec = addM(group, pecGeo, skinMat, side * 0.36, 3.98, 0.46);
+          pec.scale.set(1.2, 0.86, 0.72);
+          const lat = addM(group, latGeo, skinDarkMat, side * 0.74, 3.6, -0.06);
+          lat.scale.set(0.8, 1.15, 0.9);
+        }
+
+        const furTuftGeo = this.getGeo('bmin:fur_tuft', () => new THREE.SphereGeometry(0.2, 8, 8));
+        for (const [fx, fy, fz] of [[0, 4.06, 0.62], [-0.22, 3.9, 0.6], [0.22, 3.88, 0.6]] as const) {
+          const tuft = addM(group, furTuftGeo, chestFurMat, fx, fy, fz);
+          tuft.scale.set(1.1, 0.8, 0.7);
+        }
+
+        // --- 3. OVERALLS: bib, back panel, straps with buckles, sewn-on patches ---
+        addM(group, this.getGeo('bmin:bib', () => new THREE.BoxGeometry(1.12, 1.05, 0.22)), canvasMat, 0, 3.5, 0.6);
+        addM(group, this.getGeo('bmin:wrap', () => new THREE.BoxGeometry(1.64, 1.24, 1.18)), canvasMat, 0, 2.9, 0);
+        addM(group, this.getGeo('bmin:back_panel', () => new THREE.BoxGeometry(1.36, 1.2, 0.22)), canvasMat, 0, 3.5, -0.6);
+
+        const strapGeo = this.getGeo('bmin:strap', () => new THREE.BoxGeometry(0.24, 0.98, 0.17));
+        const buckleGeo = this.getGeo('bmin:buckle', () => new THREE.BoxGeometry(0.27, 0.21, 0.11));
+        const bucklePinGeo = this.getGeo('bmin:buckle_pin', () => new THREE.BoxGeometry(0.05, 0.19, 0.05));
+        for (const side of [-1, 1]) {
+          const strap = addM(group, strapGeo, canvasDarkMat, side * 0.36, 4.14, 0.56);
+          strap.rotation.z = side * 0.14;
+          const back = addM(group, strapGeo, canvasDarkMat, side * 0.32, 4.1, -0.56);
+          back.rotation.z = -side * 0.1;
+          addM(group, buckleGeo, brassMat, side * 0.36, 3.76, 0.71);
+          addM(group, bucklePinGeo, boltMat, side * 0.36, 3.76, 0.78);
+          // shoulder pad where the strap crosses the trapezius
+          addM(group, this.getGeo('bmin:strap_pad', () => new THREE.BoxGeometry(0.3, 0.14, 0.36)), canvasDarkMat, side * 0.4, 4.5, 0.1);
+        }
+
+        const patchGeo = this.getGeo('bmin:patch_sq', () => new THREE.BoxGeometry(0.32, 0.3, 0.05));
+        for (const [px, py, pz, prot] of [[0.42, 3.2, 0.72, 0.2], [-0.5, 2.82, 0.62, -0.35], [-0.62, 3.4, -0.72, 0.15]] as const) {
+          const patch = addM(group, patchGeo, patchMat, px, py, pz);
+          patch.rotation.z = prot;
+        }
+
+        // --- 4. TOOL BELT: leather strap, big buckle, pouches, hanging pickaxe ---
+        addM(group, this.getGeo('bmin:belt', () => new THREE.BoxGeometry(1.78, 0.3, 1.24)), leatherMat, 0, 2.64, 0);
+        addM(group, this.getGeo('bmin:belt_buckle', () => new THREE.BoxGeometry(0.42, 0.36, 0.12)), brassMat, 0, 2.64, 0.66);
+        addM(group, this.getGeo('bmin:belt_buckle_in', () => new THREE.BoxGeometry(0.2, 0.18, 0.16)), boltMat, 0, 2.64, 0.68);
+
+        const pouchGeo = this.getGeo('bmin:pouch', () => new THREE.BoxGeometry(0.38, 0.44, 0.28));
+        const pouchFlapGeo = this.getGeo('bmin:pouch_flap', () => new THREE.BoxGeometry(0.42, 0.14, 0.32));
+        const studGeo = this.getGeo('bmin:stud', () => new THREE.SphereGeometry(0.045, 8, 8));
+        for (const [ux, uy, uz] of [[0.72, 2.42, 0.44], [-0.72, 2.42, 0.44]] as const) {
+          addM(group, pouchGeo, leatherMat, ux, uy, uz);
+          addM(group, pouchFlapGeo, canvasDarkMat, ux, uy + 0.24, uz);
+          addM(group, studGeo, brassMat, ux, uy + 0.05, uz + 0.16);
+        }
+
+        addM(group, this.getGeo('bmin:pick_handle', () => new THREE.CylinderGeometry(0.06, 0.052, 1.25, 8)), leatherMat, -1.0, 1.95, -0.42).rotation.z = 0.14;
+        addM(group, this.getGeo('bmin:pick_collar', () => new THREE.CylinderGeometry(0.09, 0.09, 0.14, 8)), metalMat, -0.9, 2.48, -0.42);
+        const pickHead = addM(group, this.getGeo('bmin:pick_head', () => new THREE.BoxGeometry(0.14, 0.16, 0.72)), metalMat, -0.9, 2.56, -0.42);
+        pickHead.rotation.x = 0.08;
+        const pickBlade = addM(group, this.getGeo('bmin:pick_blade', () => new THREE.ConeGeometry(0.11, 0.34, 6)), metalMat, -0.9, 2.56, 0.02);
+        pickBlade.rotation.x = Math.PI / 2;
+
+        // --- 5. ARMS: stacked-capsule musculature; +X side is the TNT throwing arm ---
+        const deltGeo = this.getGeo('bmin:delt', () => new THREE.SphereGeometry(0.4, 12, 12));
+        const bicepGeo = this.getGeo('bmin:bicep', () => new THREE.CapsuleGeometry(0.29, 0.4, 8, 12));
+        const tricepGeo = this.getGeo('bmin:tricep', () => new THREE.SphereGeometry(0.27, 10, 10));
+        const elbowGeo = this.getGeo('bmin:elbow', () => new THREE.SphereGeometry(0.25, 10, 10));
+        const foreGeo = this.getGeo('bmin:forearm', () => new THREE.CapsuleGeometry(0.25, 0.42, 8, 12));
+        const wristGeo = this.getGeo('bmin:wrist', () => new THREE.CylinderGeometry(0.24, 0.24, 0.16, 10));
+        const gloveGeo = this.getGeo('bmin:glove', () => new THREE.SphereGeometry(0.3, 12, 12));
+        const knuckleGeo = this.getGeo('bmin:knuckle', () => new THREE.SphereGeometry(0.085, 8, 8));
+
+        for (const side of [-1, 1]) {
+          const arm = new THREE.Group();
+          if (side > 0) arm.name = 'boss_miner_arm'; // throwing shoulder pivot
+          arm.position.set(side * 0.96, 4.14, 0.04);
+          arm.rotation.z = side * -0.14;
+          group.add(arm);
+
+          addM(arm, deltGeo, skinMat, 0, 0, 0).castShadow = true;
+          const bicep = addM(arm, bicepGeo, skinMat, side * 0.05, -0.46, 0.06);
+          bicep.rotation.z = side * -0.08;
+          addM(arm, tricepGeo, skinDarkMat, side * 0.02, -0.52, -0.16);
+          addM(arm, elbowGeo, skinDarkMat, side * 0.09, -0.9, 0.03);
+          addM(arm, foreGeo, skinMat, side * 0.13, -1.3, 0.09);
+          addM(arm, wristGeo, leatherMat, side * 0.16, -1.62, 0.11);
+          addM(arm, gloveGeo, leatherMat, side * 0.18, -1.84, 0.16).scale.set(1.0, 0.95, 1.15);
+          for (let k = -1; k <= 1; k++) {
+            addM(arm, knuckleGeo, leatherMat, side * 0.18 + k * 0.12, -1.86, 0.42);
+          }
+
+          if (side > 0) {
+            // --- 6. THE LIT TNT BUNDLE (toggled visible while the boss is armed) ---
+            const tnt = new THREE.Group();
+            tnt.name = 'boss_miner_tnt';
+            tnt.position.set(0.2, -1.9, 0.36);
+            tnt.rotation.x = -0.25;
+            arm.add(tnt);
+
+            const stickGeo = this.getGeo('bmin:tnt_stick', () => {
+              const g = new THREE.CylinderGeometry(0.085, 0.085, 0.56, 10);
+              g.rotateX(Math.PI / 2);
+              return g;
+            });
+            const capGeo = this.getGeo('bmin:tnt_cap', () => {
+              const g = new THREE.CylinderGeometry(0.09, 0.09, 0.06, 10);
+              g.rotateX(Math.PI / 2);
+              return g;
+            });
+            const fuseSegGeo = this.getGeo('bmin:fuse_seg', () => new THREE.CylinderGeometry(0.016, 0.014, 0.2, 5));
+            const bandGeo = this.getGeo('bmin:tnt_band_ring', () => {
+              const g = new THREE.TorusGeometry(0.17, 0.028, 6, 14);
+              g.rotateY(Math.PI / 2);
+              return g;
+            });
+
+            const stickOffsets = [[-0.09, 0.05], [0.09, 0.05], [-0.05, -0.09], [0.07, -0.08]] as const;
+            for (let s = 0; s < stickOffsets.length; s++) {
+              const ox = stickOffsets[s][0];
+              const oy = stickOffsets[s][1];
+              addM(tnt, stickGeo, tntMat, ox, oy, 0);
+              addM(tnt, capGeo, brassMat, ox, oy, 0.3);
+            }
+            addM(tnt, bandGeo, tntBandMat, 0, 0, 0.12);
+            addM(tnt, bandGeo, tntBandMat, 0, 0, -0.12);
+
+            // One long fuse braided out of the bundle up to the burning tip
+            for (let f = 0; f < 3; f++) {
+              const seg = addM(tnt, fuseSegGeo, fuseMat, 0.02 * f, 0.1 + f * 0.13, 0.36 + f * 0.08);
+              seg.rotation.x = 0.7 + f * 0.2;
+              seg.rotation.z = f * 0.25;
+            }
+
+            // Burning fuse tip - emissive only, no PointLight (SceneCuller light budget).
+            addM(tnt, this.getGeo('bmin:spark_core', () => new THREE.SphereGeometry(0.06, 8, 8)), sparkMat, 0.01, 0.34, 0.56);
+            addM(tnt, this.getGeo('bmin:spark_halo', () => new THREE.SphereGeometry(0.15, 8, 8)), sparkHaloMat, 0.01, 0.34, 0.56);
+            addM(tnt, this.getGeo('bmin:spark_halo2', () => new THREE.SphereGeometry(0.26, 8, 8)), sparkHaloMat, 0.01, 0.35, 0.58);
+          }
+        }
+
+        // --- 7. NECK + HYRAX HEAD ---
+        addM(group, this.getGeo('bmin:neck', () => new THREE.CylinderGeometry(0.34, 0.42, 0.4, 12)), skinMat, 0, 4.52, 0.02);
+
+        const skull = addM(group, this.getGeo('bmin:skull', () => new THREE.SphereGeometry(0.62, 16, 16)), skinMat, 0, 4.98, 0.04);
+        skull.castShadow = true;
+        addM(group, this.getGeo('bmin:snout', () => new THREE.SphereGeometry(0.36, 12, 12)), skinMat, 0, 4.8, 0.56).scale.set(1.15, 0.85, 1.35);
+        addM(group, this.getGeo('bmin:nose', () => new THREE.SphereGeometry(0.1, 8, 8)), minerNoseMat, 0, 4.87, 0.94).scale.set(1.2, 0.8, 1.0);
+
+        const cheekGeo = this.getGeo('bmin:cheek', () => new THREE.SphereGeometry(0.23, 10, 10));
+        const browGeo = this.getGeo('bmin:brow', () => new THREE.BoxGeometry(0.36, 0.13, 0.22));
+        const eyeGeo = this.getGeo('bmin:eye', () => new THREE.SphereGeometry(0.13, 10, 10));
+        const pupilGeo = this.getGeo('bmin:pupil_geo', () => new THREE.SphereGeometry(0.06, 8, 8));
+        const earOuterGeo = this.getGeo('bmin:ear', () => new THREE.SphereGeometry(0.22, 10, 10));
+        const earInnerGeo = this.getGeo('bmin:ear_in', () => new THREE.SphereGeometry(0.14, 8, 8));
+        const tuskGeo = this.getGeo('bmin:tusk_geo', () => new THREE.BoxGeometry(0.11, 0.3, 0.1));
+        for (const side of [-1, 1]) {
+          addM(group, cheekGeo, skinMat, side * 0.34, 4.82, 0.36);
+          const brow = addM(group, browGeo, skinDarkMat, side * 0.26, 5.19, 0.46);
+          brow.rotation.z = side * -0.42; // scowl
+          addM(group, eyeGeo, eyeDarkMat, side * 0.26, 5.02, 0.46);
+          addM(group, pupilGeo, pupilMat, side * 0.26, 5.02, 0.55);
+          const ear = addM(group, earOuterGeo, skinMat, side * 0.6, 5.24, -0.04);
+          ear.scale.set(0.5, 1.0, 0.85);
+          const earIn = addM(group, earInnerGeo, earPinkMat, side * 0.66, 5.22, 0.0);
+          earIn.scale.set(0.35, 0.9, 0.7);
+          const tusk = addM(group, tuskGeo, tuskMat, side * 0.15, 4.53, 0.8);
+          tusk.rotation.x = 0.12;
+        }
+
+        const bigWhiskerGeo = this.getGeo('bmin:whisker_geo', () => new THREE.CylinderGeometry(0.009, 0.003, 0.6, 4));
+        for (const side of [-1, 1]) {
+          for (let w = 0; w <= 1; w++) {
+            const whisker = addM(group, bigWhiskerGeo, minerWhiskerMat, side * 0.42, 4.74 + w * 0.08, 0.78);
+            whisker.rotation.z = Math.PI / 2 + side * 0.14;
+            whisker.rotation.x = (w * 2 - 1) * 0.18;
+          }
+        }
+
+        // Hinged lower jaw (animated when roaring)
+        const minerJaw = new THREE.Group();
+        minerJaw.name = 'boss_mouth_jaw';
+        minerJaw.position.set(0, 4.66, 0.3);
+        group.add(minerJaw);
+        addM(minerJaw, this.getGeo('bmin:jaw', () => new THREE.BoxGeometry(0.52, 0.24, 0.6)), skinDarkMat, 0, -0.06, 0.16);
+        const lowerToothGeo = this.getGeo('bmin:lower_tooth', () => new THREE.BoxGeometry(0.08, 0.14, 0.08));
+        for (const side of [-1, 1]) addM(minerJaw, lowerToothGeo, tuskMat, side * 0.14, 0.06, 0.4);
+
+        // --- 8. BATTERED HARDHAT + HEADLAMP ---
+        const hardhat = addM(group, this.getGeo('bmin:hat_dome', () => new THREE.SphereGeometry(0.68, 16, 14, 0, Math.PI * 2, 0, Math.PI / 1.9)), hatMat, 0, 5.22, 0.02);
+        hardhat.castShadow = true;
+        addM(group, this.getGeo('bmin:hat_brim', () => new THREE.CylinderGeometry(0.88, 0.86, 0.08, 18)), hatMat, 0, 5.24, 0.02);
+        const visor = addM(group, this.getGeo('bmin:hat_visor', () => new THREE.BoxGeometry(0.74, 0.08, 0.42)), hatMat, 0, 5.26, 0.66);
+        visor.rotation.x = -0.14;
+        addM(group, this.getGeo('bmin:hat_crest', () => new THREE.BoxGeometry(0.15, 0.2, 1.16)), hatDarkMat, 0, 5.72, 0.02);
+        const hatRidgeGeo = this.getGeo('bmin:hat_ridge', () => new THREE.BoxGeometry(0.09, 0.14, 0.96));
+        const hatRivetGeo = this.getGeo('bmin:hat_rivet', () => new THREE.SphereGeometry(0.045, 8, 8));
+        for (const side of [-1, 1]) {
+          addM(group, hatRidgeGeo, hatDarkMat, side * 0.4, 5.6, 0.02);
+          addM(group, hatRivetGeo, boltMat, side * 0.66, 5.3, -0.3);
+          // chin strap sides
+          addM(group, this.getGeo('bmin:chin_strap', () => new THREE.BoxGeometry(0.05, 0.5, 0.05)), leatherMat, side * 0.6, 4.94, 0.14);
+        }
+        addM(group, this.getGeo('bmin:lamp_body', () => new THREE.CylinderGeometry(0.2, 0.22, 0.24, 12)), hatDarkMat, 0, 5.42, 0.56).rotation.x = Math.PI / 2;
+        addM(group, this.getGeo('bmin:lamp_bezel', () => new THREE.TorusGeometry(0.2, 0.035, 6, 14)), boltMat, 0, 5.42, 0.68);
+        addM(group, this.getGeo('bmin:lamp_lens_geo', () => new THREE.CylinderGeometry(0.17, 0.17, 0.04, 12)), lampLensMat, 0, 5.42, 0.69).rotation.x = Math.PI / 2;
+        // Emissive light cone (fake volumetric beam - NOT a PointLight)
+        const lampCone = addM(group, this.getGeo('bmin:lamp_beam', () => new THREE.ConeGeometry(0.6, 1.9, 14, 1, true)), lampConeMat, 0, 5.38, 1.64);
+        lampCone.rotation.x = -Math.PI / 2;
+        // Cable from the lamp down to the belt battery
+        const cableGeo = this.getGeo('bmin:cable', () => new THREE.CylinderGeometry(0.03, 0.03, 0.62, 6));
+        for (let c = 0; c < 3; c++) {
+          const seg = addM(group, cableGeo, leatherMat, 0.5 + c * 0.04, 5.05 - c * 0.56, 0.08 - c * 0.18);
+          seg.rotation.x = -0.25;
+          seg.rotation.z = 0.12;
+        }
+        addM(group, this.getGeo('bmin:battery', () => new THREE.BoxGeometry(0.3, 0.34, 0.22)), hatDarkMat, 0.62, 2.5, -0.5);
         break;
       }
 
       case 'boss_overlord': {
-        // Gothic obsidian throne with cybernetic demon lord, plasma core & floating yellow eyes
-        const throneGeo = this.getGeo('box_3.8_4.2_3.2', () => new THREE.BoxGeometry(3.8, 4.2, 3.2));
-        const throneMat = this.getMaterial('boss_throne_mat', () => new THREE.MeshStandardMaterial({ color: 0x0f0202, emissive: 0xff1100, emissiveIntensity: 0.5, roughness: 0.2 }));
-        const throne = new THREE.Mesh(throneGeo, throneMat);
-        throne.position.y = 2.1;
-        group.add(throne);
+        // --- CHAPTER 4 BOSS: "ВЛАДЫКА НА ТРОНЕ (ОГРОМНЫЙ ДОМАН)" ---
+        // A colossal demon lord welded to his throne of skulls and bone: a mound of skulls at the
+        // base, a towering bone-spired backrest carved with burning runes, clawed hands gripping
+        // the armrests, spiked black-iron plate over a dark muscular body, a crown of horns, and
+        // a snarling hyrax-demon face whose eyes fire a red beam. Throne + lord ~7.6 units tall.
+        //
+        // Animated parts (see EnemyEngine): 'overlord_eye_l' / 'overlord_eye_r' (scaled while
+        // charging), 'overlord_laser' (unit-length beam along +Z, starts hidden), 'overlord_arm_l'
+        // / 'overlord_arm_r' (shoulder pivots), 'overlord_jaw' (lower jaw).
+        const addO = (parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
+          const m = new THREE.Mesh(geo, mat);
+          m.position.set(x, y, z);
+          parent.add(m);
+          return m;
+        };
 
-        const bodyGeo = this.getGeo('sph_1.9_16_16', () => new THREE.SphereGeometry(1.9, 16, 16));
-        const bodyMat = this.getMaterial('boss_overlord_body', () => new THREE.MeshStandardMaterial({ color: 0x400000, emissive: 0xff0000, emissiveIntensity: 1.0, roughness: 0.2 }));
-        const body = new THREE.Mesh(bodyGeo, bodyMat);
-        body.position.set(0, 4.8, 0);
-        group.add(body);
+        // --- MATERIALS ---
+        const boneMat = this.getMaterial('bovl:bone', () => new THREE.MeshStandardMaterial({ color: 0xd8cfb4, roughness: 0.72, metalness: 0.02 }));
+        const boneDarkMat = this.getMaterial('bovl:bone_dark', () => new THREE.MeshStandardMaterial({ color: 0x9c8f74, roughness: 0.82, metalness: 0.02 }));
+        const socketMat = this.getMaterial('bovl:socket', () => new THREE.MeshBasicMaterial({ color: 0xff5a1a }));
+        const ironMat = this.getMaterial('bovl:iron', () => new THREE.MeshStandardMaterial({ color: 0x14100f, roughness: 0.42, metalness: 0.88 }));
+        const ironTrimMat = this.getMaterial('bovl:iron_trim', () => new THREE.MeshStandardMaterial({ color: 0x2c2320, roughness: 0.3, metalness: 0.95 }));
+        const runeMat = this.getMaterial('bovl:rune', () => new THREE.MeshBasicMaterial({ color: 0xff2b08 }));
+        const demonSkinMat = this.getMaterial('bovl:skin', () => new THREE.MeshStandardMaterial({ color: 0x3a1210, roughness: 0.66, metalness: 0.1 }));
+        const demonSkinDarkMat = this.getMaterial('bovl:skin_dark', () => new THREE.MeshStandardMaterial({ color: 0x230a09, roughness: 0.74, metalness: 0.1 }));
+        const overlordClawMat = this.getMaterial('bovl:claw', () => new THREE.MeshStandardMaterial({ color: 0x0e0b0a, roughness: 0.25, metalness: 0.5 }));
+        const fangMat = this.getMaterial('bovl:fang', () => new THREE.MeshStandardMaterial({ color: 0xefe6cf, roughness: 0.28 }));
+        const hornMat = this.getMaterial('bovl:horn', () => new THREE.MeshStandardMaterial({ color: 0x1a1412, roughness: 0.38, metalness: 0.45 }));
+        const emberMat = this.getMaterial('bovl:ember', () => new THREE.MeshBasicMaterial({ color: 0xff3b0a }));
+        const emberHaloMat = this.getMaterial('bovl:ember_halo', () => new THREE.MeshBasicMaterial({
+          color: 0xff6a12, transparent: true, opacity: 0.34, depthWrite: false, blending: THREE.AdditiveBlending,
+        }));
+        const bannerMat = this.getMaterial('bovl:banner', () => new THREE.MeshStandardMaterial({
+          color: 0x4a0d0d, roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide,
+        }));
+        const cushionMat = this.getMaterial('bovl:cushion', () => new THREE.MeshStandardMaterial({ color: 0x5c0f14, roughness: 0.9 }));
+        const laserMat = this.getMaterial('bovl:laser', () => new THREE.MeshBasicMaterial({
+          color: 0xff1c07, transparent: true, opacity: 0.92, depthWrite: false, blending: THREE.AdditiveBlending,
+        }));
+        const laserGlowMat = this.getMaterial('bovl:laser_glow', () => new THREE.MeshBasicMaterial({
+          color: 0xff7a2e, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending,
+        }));
 
-        const eyeMat = this.getMaterial('yellow_overlord_eye', () => new THREE.MeshBasicMaterial({ color: 0xffff00 }));
-        const eyeGeo = this.getGeo('sph_0.22_8_8', () => new THREE.SphereGeometry(0.22, 8, 8));
-        const eye1 = new THREE.Mesh(eyeGeo, eyeMat);
-        eye1.position.set(-0.55, 5.3, 1.7);
-        const eye2 = new THREE.Mesh(eyeGeo, eyeMat);
-        eye2.position.set(0.55, 5.3, 1.7);
-        group.add(eye1, eye2);
+        // --- 1. SKULL MOUND BASE ---
+        const skullCraniumGeo = this.getGeo('bovl:skull_cranium', () => new THREE.SphereGeometry(0.28, 10, 10));
+        const skullJawGeo = this.getGeo('bovl:skull_jaw', () => new THREE.BoxGeometry(0.26, 0.13, 0.24));
+        const skullSocketGeo = this.getGeo('bovl:skull_socket', () => new THREE.SphereGeometry(0.075, 6, 6));
+        const skullMoundGeo = this.getGeo('bovl:mound', () => new THREE.SphereGeometry(2.05, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2));
+        const mound = addO(group, skullMoundGeo, boneDarkMat, 0, 0.02, 0.1);
+        mound.scale.set(1.0, 0.42, 0.9);
+
+        // [x, y, z, scale, yaw] - a heap of skulls piled around the throne foot.
+        const skullHeap = [
+          [-1.55, 0.3, 0.75, 1.0, 0.5], [-0.8, 0.26, 1.28, 0.92, -0.35], [-0.1, 0.34, 1.45, 1.05, 0.1],
+          [0.78, 0.26, 1.28, 0.92, 0.4], [1.55, 0.3, 0.8, 1.0, -0.5], [-1.1, 0.72, 0.62, 0.8, -0.2],
+          [1.05, 0.7, 0.62, 0.82, 0.25],
+        ] as const;
+        for (let s = 0; s < skullHeap.length; s++) {
+          const sk = skullHeap[s];
+          const skull = new THREE.Group();
+          skull.position.set(sk[0], sk[1], sk[2]);
+          skull.rotation.y = sk[4];
+          skull.scale.setScalar(sk[3]);
+          group.add(skull);
+
+          addO(skull, skullCraniumGeo, boneMat, 0, 0, 0).scale.set(1.0, 0.95, 1.15);
+          addO(skull, skullJawGeo, boneDarkMat, 0, -0.2, 0.1);
+          addO(skull, skullSocketGeo, socketMat, -0.11, 0.04, 0.24);
+          addO(skull, skullSocketGeo, socketMat, 0.11, 0.04, 0.24);
+        }
+        // Half-buried craniums filling out the heap for one mesh apiece
+        for (const [hx, hy, hz, hs] of [[1.74, 0.2, -0.12, 0.85], [-1.76, 0.2, -0.05, 0.88], [0.6, 0.16, -1.5, 0.8]] as const) {
+          addO(group, skullCraniumGeo, boneDarkMat, hx, hy, hz).scale.set(hs, hs * 0.8, hs * 1.1);
+        }
+
+        // --- 2. THRONE: plinth, seat, pillars, high bone-spired back, runes ---
+        addO(group, this.getGeo('bovl:plinth', () => new THREE.BoxGeometry(3.3, 0.52, 2.7)), ironMat, 0, 1.18, -0.15).castShadow = true;
+        addO(group, this.getGeo('bovl:seat', () => new THREE.BoxGeometry(2.7, 0.34, 2.1)), ironMat, 0, 1.6, -0.05);
+        addO(group, this.getGeo('bovl:cushion', () => new THREE.BoxGeometry(2.4, 0.22, 1.8)), cushionMat, 0, 1.82, -0.05);
+
+        const thronePillarGeo = this.getGeo('bovl:pillar', () => new THREE.BoxGeometry(0.36, 1.2, 0.36));
+        const throneColumnGeo = this.getGeo('bovl:column', () => new THREE.BoxGeometry(0.4, 4.4, 0.46));
+        for (const side of [-1, 1]) {
+          addO(group, thronePillarGeo, ironMat, side * 1.4, 0.9, 0.9);
+          addO(group, throneColumnGeo, ironMat, side * 1.4, 3.75, -1.0);
+          // bone finial capping each column
+          addO(group, this.getGeo('bovl:finial', () => new THREE.SphereGeometry(0.26, 10, 10)), boneMat, side * 1.4, 6.05, -1.0);
+        }
+
+        addO(group, this.getGeo('bovl:back_slab', () => new THREE.BoxGeometry(2.6, 3.9, 0.42)), ironMat, 0, 3.7, -1.05).castShadow = true;
+
+        // Bone spires fanning out above the backrest
+        const spireGeo = this.getGeo('bovl:spire', () => new THREE.CylinderGeometry(0.055, 0.14, 1.7, 7));
+        const spireTipGeo = this.getGeo('bovl:spire_tip', () => new THREE.SphereGeometry(0.17, 8, 8));
+        for (let sp = 0; sp < 4; sp++) {
+          const t = (sp - 1.5) / 1.5;
+          const spire = addO(group, spireGeo, boneMat, t * 1.25, 6.45 - Math.abs(t) * 0.42, -1.05 - Math.abs(t) * 0.1);
+          spire.rotation.z = -t * 0.38;
+          const tip = addO(group, spireTipGeo, boneMat, t * 1.25 + t * 0.32, 7.3 - Math.abs(t) * 0.62, -1.05 - Math.abs(t) * 0.1);
+          tip.scale.set(0.95, 1.1, 1.0);
+        }
+
+        // Carved burning runes on the backrest
+        const runePlateGeo = this.getGeo('bovl:rune_plate', () => new THREE.BoxGeometry(0.42, 0.42, 0.06));
+        const runeBarGeo = this.getGeo('bovl:rune_bar', () => new THREE.BoxGeometry(0.3, 0.06, 0.08));
+        for (const [rx, ry] of [[-0.82, 4.65], [0.82, 4.65], [0, 5.3]] as const) {
+          addO(group, runePlateGeo, ironTrimMat, rx, ry, -0.74);
+          addO(group, runeBarGeo, runeMat, rx, ry + 0.1, -0.7);
+          addO(group, runeBarGeo, runeMat, rx, ry - 0.1, -0.7).scale.set(0.7, 1, 1);
+        }
+
+        // --- 3. ARMRESTS with bone rings and skull terminals ---
+        const armrestGeo = this.getGeo('bovl:armrest', () => new THREE.BoxGeometry(0.52, 0.32, 2.1));
+        const armrestRingGeo = this.getGeo('bovl:armrest_ring', () => {
+          const g = new THREE.TorusGeometry(0.3, 0.055, 6, 14);
+          g.rotateY(Math.PI / 2);
+          return g;
+        });
+        for (const side of [-1, 1]) {
+          addO(group, armrestGeo, ironMat, side * 1.35, 2.42, 0.05);
+          addO(group, armrestRingGeo, boneMat, side * 1.35, 2.42, -0.15);
+          addO(group, skullCraniumGeo, boneMat, side * 1.35, 2.66, 1.06).scale.set(1.1, 1.0, 1.2);
+          addO(group, skullSocketGeo, socketMat, side * 1.35 - 0.11, 2.7, 1.3);
+          addO(group, skullSocketGeo, socketMat, side * 1.35 + 0.11, 2.7, 1.3);
+        }
+
+        // --- 4. THE LORD: pelvis, ribbed abdomen, torso, plate ---
+        addO(group, this.getGeo('bovl:pelvis', () => new THREE.BoxGeometry(1.6, 0.62, 1.15)), ironMat, 0, 2.14, 0.05);
+        const ribGeo = this.getGeo('bovl:rib', () => new THREE.BoxGeometry(1.24, 0.2, 0.66));
+        for (let r = 0; r < 3; r++) {
+          const rib = addO(group, ribGeo, demonSkinDarkMat, 0, 2.54 + r * 0.32, 0.34);
+          rib.scale.setScalar(1 - r * 0.06);
+        }
+
+        const overlordTorso = addO(group, this.getGeo('bovl:torso', () => new THREE.CapsuleGeometry(0.88, 0.85, 10, 16)), demonSkinMat, 0, 3.7, 0.06);
+        overlordTorso.scale.set(1.12, 1.0, 0.86);
+        overlordTorso.castShadow = true;
+
+        addO(group, this.getGeo('bovl:chest_plate', () => new THREE.BoxGeometry(1.76, 1.05, 0.9)), ironMat, 0, 4.02, 0.24);
+        addO(group, this.getGeo('bovl:chest_rune', () => new THREE.BoxGeometry(0.36, 0.5, 0.1)), runeMat, 0, 4.02, 0.7);
+        const pecPlateGeo = this.getGeo('bovl:pec_plate', () => new THREE.SphereGeometry(0.46, 12, 10));
+        for (const side of [-1, 1]) {
+          addO(group, pecPlateGeo, ironTrimMat, side * 0.46, 4.14, 0.6).scale.set(1.05, 0.9, 0.6);
+        }
+
+        addO(group, this.getGeo('bovl:gorget', () => new THREE.CylinderGeometry(0.52, 0.66, 0.26, 14)), ironTrimMat, 0, 4.72, 0.08);
+        const collarSpikeGeo = this.getGeo('bovl:collar_spike', () => new THREE.ConeGeometry(0.08, 0.32, 6));
+        for (let c = 0; c < 4; c++) {
+          const a = -0.86 + c * 0.57;
+          const spike = addO(group, collarSpikeGeo, hornMat, Math.sin(a) * 0.6, 4.9, Math.cos(a) * 0.55 + 0.08);
+          spike.rotation.x = Math.cos(a) * 0.5;
+          spike.rotation.z = -Math.sin(a) * 0.5;
+        }
+
+        // --- 5. ARMS (shoulder pivots) ending in clawed hands on the armrests ---
+        const pauldronGeo = this.getGeo('bovl:pauldron', () => new THREE.SphereGeometry(0.66, 14, 10, 0, Math.PI * 2, 0, Math.PI / 1.7));
+        const pauldronRimGeo = this.getGeo('bovl:pauldron_rim', () => new THREE.TorusGeometry(0.6, 0.07, 6, 16));
+        const pauldronSpikeGeo = this.getGeo('bovl:pauldron_spike', () => new THREE.ConeGeometry(0.11, 0.44, 6));
+        const upperArmGeo = this.getGeo('bovl:upper_arm', () => new THREE.CapsuleGeometry(0.29, 0.5, 8, 12));
+        const elbowSpikeGeo = this.getGeo('bovl:elbow_spike', () => new THREE.ConeGeometry(0.13, 0.4, 6));
+        const forearmGeo = this.getGeo('bovl:forearm', () => new THREE.CapsuleGeometry(0.27, 0.5, 8, 12));
+        const vambraceGeo = this.getGeo('bovl:vambrace', () => new THREE.BoxGeometry(0.44, 0.5, 0.44));
+        const wristRingGeo = this.getGeo('bovl:wrist_ring', () => new THREE.TorusGeometry(0.24, 0.05, 6, 12));
+        const palmGeo = this.getGeo('bovl:palm', () => new THREE.SphereGeometry(0.3, 12, 10));
+        const fingerGeo = this.getGeo('bovl:finger', () => new THREE.CapsuleGeometry(0.065, 0.2, 5, 7));
+        const clawGeo = this.getGeo('bovl:claw_geo', () => new THREE.ConeGeometry(0.055, 0.24, 6));
+
+        for (const side of [-1, 1]) {
+          const arm = new THREE.Group();
+          arm.name = side < 0 ? 'overlord_arm_l' : 'overlord_arm_r';
+          arm.position.set(side * 1.06, 4.34, 0.05);
+          group.add(arm);
+
+          addO(arm, pauldronGeo, ironMat, side * 0.12, 0.1, 0).rotation.z = side * 0.32;
+          const rim = addO(arm, pauldronRimGeo, ironTrimMat, side * 0.12, 0.02, 0);
+          rim.rotation.x = Math.PI / 2;
+          for (const sp of [-0.28, 0.28]) {
+            const spike = addO(arm, pauldronSpikeGeo, hornMat, side * 0.5, 0.26, sp);
+            spike.rotation.z = side * 0.85;
+          }
+
+          addO(arm, upperArmGeo, demonSkinMat, side * 0.12, -0.6, 0.14).rotation.z = side * -0.12;
+          addO(arm, elbowSpikeGeo, hornMat, side * 0.28, -1.05, 0.05).rotation.z = side * 1.4;
+          const fore = addO(arm, forearmGeo, demonSkinMat, side * 0.2, -1.15, 0.42);
+          fore.rotation.x = -0.55;
+          addO(arm, vambraceGeo, ironMat, side * 0.2, -1.2, 0.44).rotation.x = -0.55;
+
+          // Clawed hand clamped over the armrest
+          addO(arm, palmGeo, demonSkinDarkMat, side * 0.28, -1.68, 0.7).scale.set(1.05, 0.8, 1.2);
+          for (let f = -1; f <= 1; f++) {
+            const finger = addO(arm, fingerGeo, demonSkinDarkMat, side * 0.28 + f * 0.16, -1.74, 0.94);
+            finger.rotation.x = Math.PI / 2.2;
+            const claw = addO(arm, clawGeo, overlordClawMat, side * 0.28 + f * 0.16, -1.84, 1.14);
+            claw.rotation.x = Math.PI / 1.9;
+          }
+          const thumb = addO(arm, clawGeo, overlordClawMat, side * 0.54, -1.74, 0.74);
+          thumb.rotation.z = side * 1.9;
+        }
+
+        // --- 6. ARMOURED LEGS planted on the skull mound ---
+        const legThighGeo = this.getGeo('bovl:thigh', () => {
+          const g = new THREE.CapsuleGeometry(0.4, 0.75, 8, 12);
+          g.rotateX(Math.PI / 2);
+          return g;
+        });
+        const legKneeGeo = this.getGeo('bovl:knee', () => new THREE.BoxGeometry(0.58, 0.5, 0.5));
+        const legShinGeo = this.getGeo('bovl:shin', () => new THREE.CapsuleGeometry(0.32, 0.55, 8, 12));
+        const legBootGeo = this.getGeo('bovl:boot', () => new THREE.BoxGeometry(0.6, 0.34, 0.92));
+        for (const side of [-1, 1]) {
+          addO(group, legThighGeo, demonSkinMat, side * 0.6, 2.02, 0.85);
+          addO(group, legKneeGeo, ironMat, side * 0.62, 1.94, 1.5);
+          addO(group, legShinGeo, demonSkinMat, side * 0.64, 1.5, 1.62);
+          addO(group, legBootGeo, ironMat, side * 0.64, 1.06, 1.76);
+          for (const t of [-0.19, 0.19]) {
+            addO(group, clawGeo, overlordClawMat, side * 0.64 + t, 0.98, 2.2).rotation.x = Math.PI / 1.85;
+          }
+        }
+
+        // --- 7. HEAD: hyrax-demon skull, fangs, burning eyes, hinged jaw ---
+        addO(group, this.getGeo('bovl:neck', () => new THREE.CylinderGeometry(0.38, 0.5, 0.36, 12)), demonSkinMat, 0, 4.94, 0.08);
+        const overlordSkull = addO(group, this.getGeo('bovl:skull_head', () => new THREE.SphereGeometry(0.62, 16, 16)), demonSkinMat, 0, 5.32, 0.12);
+        overlordSkull.castShadow = true;
+        addO(group, this.getGeo('bovl:muzzle', () => new THREE.SphereGeometry(0.38, 12, 12)), demonSkinMat, 0, 5.16, 0.6).scale.set(1.2, 0.85, 1.3);
+        addO(group, this.getGeo('bovl:head_nose', () => new THREE.SphereGeometry(0.1, 8, 8)), overlordClawMat, 0, 5.24, 0.98);
+        addO(group, this.getGeo('bovl:brow_bar', () => new THREE.BoxGeometry(1.0, 0.16, 0.26)), ironTrimMat, 0, 5.62, 0.42);
+
+        const headBrowGeo = this.getGeo('bovl:brow', () => new THREE.BoxGeometry(0.36, 0.14, 0.24));
+        const demonEarGeo = this.getGeo('bovl:ear', () => new THREE.ConeGeometry(0.16, 0.5, 8));
+        const upperFangGeo = this.getGeo('bovl:fang_up', () => new THREE.ConeGeometry(0.07, 0.3, 6));
+        for (const side of [-1, 1]) {
+          const brow = addO(group, headBrowGeo, demonSkinDarkMat, side * 0.28, 5.48, 0.46);
+          brow.rotation.z = side * -0.5;
+          const ear = addO(group, demonEarGeo, demonSkinDarkMat, side * 0.62, 5.62, -0.05);
+          ear.rotation.z = side * 0.5;
+          const fang = addO(group, upperFangGeo, fangMat, side * 0.19, 4.96, 0.78);
+          fang.rotation.x = Math.PI;
+        }
+
+        // Burning eyes - direct pivots, scaled up while charging the beam.
+        const overlordEyeGeo = this.getGeo('bovl:eye', () => new THREE.SphereGeometry(0.15, 12, 12));
+        const overlordEyeHaloGeo = this.getGeo('bovl:eye_halo', () => new THREE.SphereGeometry(0.26, 10, 10));
+        for (const side of [-1, 1]) {
+          const eye = new THREE.Mesh(overlordEyeGeo, emberMat);
+          eye.name = side < 0 ? 'overlord_eye_l' : 'overlord_eye_r';
+          eye.position.set(side * 0.27, 5.34, 0.5);
+          group.add(eye);
+          // halo rides along as a child so it grows with the charge
+          const halo = new THREE.Mesh(overlordEyeHaloGeo, emberHaloMat);
+          halo.position.set(0, 0, 0.04);
+          eye.add(halo);
+        }
+
+        // Hinged snarling jaw
+        const overlordJaw = new THREE.Group();
+        overlordJaw.name = 'overlord_jaw';
+        overlordJaw.position.set(0, 5.0, 0.34);
+        group.add(overlordJaw);
+        addO(overlordJaw, this.getGeo('bovl:jaw', () => new THREE.BoxGeometry(0.56, 0.26, 0.66)), demonSkinDarkMat, 0, -0.08, 0.18);
+        addO(overlordJaw, this.getGeo('bovl:jaw_trim', () => new THREE.BoxGeometry(0.6, 0.08, 0.7)), ironTrimMat, 0, -0.2, 0.18);
+        const lowerFangGeo = this.getGeo('bovl:fang_low', () => new THREE.ConeGeometry(0.06, 0.26, 6));
+        for (const side of [-1, 1]) {
+          addO(overlordJaw, lowerFangGeo, fangMat, side * 0.17, 0.08, 0.42);
+        }
+
+        // --- 8. HORNED CROWN (6 rear horns + 2 great side horns) ---
+        addO(group, this.getGeo('bovl:crown_ring', () => new THREE.TorusGeometry(0.62, 0.075, 8, 18)), ironTrimMat, 0, 5.72, 0.06).rotation.x = Math.PI / 2;
+        const crownHornGeo = this.getGeo('bovl:crown_horn', () => new THREE.ConeGeometry(0.1, 0.75, 7));
+        const crownBaseGeo = this.getGeo('bovl:crown_base', () => new THREE.CylinderGeometry(0.13, 0.15, 0.12, 8));
+        for (let h = 0; h < 5; h++) {
+          const a = -1.32 + h * 0.66;
+          const hx = Math.sin(a) * 0.56;
+          const hz = -Math.cos(a) * 0.5 + 0.06;
+          const tilt = 0.2 + Math.abs(a) * 0.16;
+          addO(group, crownBaseGeo, ironMat, hx, 5.78, hz);
+          const horn = addO(group, crownHornGeo, hornMat, hx * 1.35, 6.2, hz * 1.35);
+          horn.rotation.z = -Math.sin(a) * 0.55;
+          horn.rotation.x = -tilt * Math.cos(a);
+        }
+
+        // Two great ram horns sweeping out from the temples
+        const greatHornGeo = this.getGeo('bovl:great_horn', () => new THREE.CapsuleGeometry(0.15, 0.34, 6, 10));
+        const greatHornTipGeo = this.getGeo('bovl:great_horn_tip', () => new THREE.ConeGeometry(0.12, 0.5, 8));
+        for (const side of [-1, 1]) {
+          for (let seg = 0; seg < 2; seg++) {
+            const s = addO(group, greatHornGeo, hornMat, side * (0.66 + seg * 0.34), 5.6 - seg * 0.06 + seg * seg * 0.05, 0.02 - seg * 0.22);
+            s.rotation.z = side * (1.1 + seg * 0.16);
+            s.rotation.y = side * seg * 0.3;
+            s.scale.setScalar(1 - seg * 0.14);
+          }
+          const tip = addO(group, greatHornTipGeo, hornMat, side * 1.34, 5.82, -0.42);
+          tip.rotation.z = side * -0.75;
+          tip.rotation.x = -0.5;
+        }
+
+        // --- 9. CHAINS draped from the pauldrons across the chest ---
+        const chainLinkGeo = this.getGeo('bovl:chain_link', () => new THREE.TorusGeometry(0.075, 0.024, 5, 9));
+        for (const side of [-1, 1]) {
+          for (let l = 0; l < 3; l++) {
+            const t = l / 2;
+            const link = addO(group, chainLinkGeo, ironTrimMat, side * (0.95 - t * 0.55), 4.28 - t * 0.62 + t * t * 0.18, 0.5 + t * 0.14);
+            link.rotation.y = l % 2 === 0 ? 0 : Math.PI / 2;
+            link.rotation.z = side * 0.5;
+          }
+        }
+
+        // --- 10. TATTERED BANNERS behind the throne ---
+        const bannerGeo = this.getGeo('bovl:banner', () => new THREE.BoxGeometry(0.9, 2.3, 0.04));
+        const bannerStripGeo = this.getGeo('bovl:banner_strip', () => new THREE.BoxGeometry(0.24, 0.55, 0.04));
+        const bannerPoleGeo = this.getGeo('bovl:banner_pole', () => new THREE.CylinderGeometry(0.06, 0.06, 1.2, 6));
+        for (const side of [-1, 1]) {
+          const banner = addO(group, bannerGeo, bannerMat, side * 2.0, 4.3, -1.18);
+          banner.rotation.y = side * 0.28;
+          addO(group, bannerPoleGeo, boneMat, side * 2.0, 5.6, -1.18).rotation.z = Math.PI / 2;
+          const strip = addO(group, bannerStripGeo, bannerMat, side * 2.0 - 0.24, 2.9, -1.18);
+          strip.rotation.y = side * 0.28;
+          addO(group, runePlateGeo, runeMat, side * 2.0, 4.5, -1.14).rotation.y = side * 0.28;
+        }
+
+        // --- 11. EYE LASER: unit-length beam along +Z, origin at the eyes, hidden until fired.
+        // Scaling Z lengthens it forward from the face. Emissive MeshBasicMaterial (no lights).
+        const laserGeo = this.getGeo('bovl:laser_beam', () => {
+          const g = new THREE.CylinderGeometry(0.13, 0.13, 1, 10, 1, true);
+          g.rotateX(Math.PI / 2);
+          g.translate(0, 0, 0.5);
+          return g;
+        });
+        const laserGlowGeo = this.getGeo('bovl:laser_glow_beam', () => {
+          const g = new THREE.CylinderGeometry(0.3, 0.3, 1, 10, 1, true);
+          g.rotateX(Math.PI / 2);
+          g.translate(0, 0, 0.5);
+          return g;
+        });
+        const laser = new THREE.Mesh(laserGeo, laserMat);
+        laser.name = 'overlord_laser';
+        laser.position.set(0, 5.34, 0.6);
+        laser.visible = false;
+        laser.frustumCulled = false;
+        group.add(laser);
+        // Wider soft sheath rides the same pivot so it stretches with the beam.
+        const laserGlow = new THREE.Mesh(laserGlowGeo, laserGlowMat);
+        laserGlow.frustumCulled = false;
+        laser.add(laserGlow);
         break;
       }
 
@@ -5266,8 +5854,8 @@ export class ModelBuilder {
 
     if (type === 'boss_goliath') { width = 4.2; height = 5.8; depth = 3.6; posY = 2.7; }
     else if (type === 'boss_worm') { width = 3.8; height = 3.8; depth = 12.0; posY = 1.8; }
-    else if (type === 'boss_miner') { width = 4.5; height = 4.8; depth = 3.5; posY = 2.2; }
-    else if (type === 'boss_overlord') { width = 5.2; height = 6.2; depth = 4.2; posY = 3.0; }
+    else if (type === 'boss_miner') { width = 4.2; height = 6.0; depth = 3.4; posY = 2.9; }
+    else if (type === 'boss_overlord') { width = 5.6; height = 7.6; depth = 5.0; posY = 3.7; }
     else if (type === 'boss_ultradoman') { width = 3.2; height = 4.8; depth = 3.2; posY = 2.4; }
     else if (type === 'drone' || type === 'winged_doman') { width = 2.0; height = 2.0; depth = 2.0; posY = 0.0; }
     else if (type === 'skeleton_doman' || type === 'centipede' || type === 'worm') { width = 2.0; height = 2.4; depth = 2.0; posY = 1.1; }

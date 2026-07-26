@@ -1643,6 +1643,10 @@ export class GameEngine {
         finalDamage = Math.round(damage * 1.8);
       }
 
+      // Pavise carriers (mine warden, praetorian) soak shots that land on the raised
+      // shield - the punish window is to flank them or wait for the shield to drop.
+      finalDamage = Math.round(finalDamage * this.enemies.getIncomingDamageMultiplier(closestEnemy, camPos));
+
       closestEnemy.hp -= finalDamage;
       if (closestEnemy.isRoomFrozen) {
         this.enemies.unfreezeEnemy(closestEnemy);
