@@ -61,7 +61,7 @@ export class PlayerEngine {
   };
 
   // Skill CDs
-  public coinCd: number = 0; // 4s
+  public coinCd: number = 0; // Peacemaker ricochet shot, 4s
   public flashbangCd: number = 0; // 8s
   public berserkCd: number = 0; // 25s
   public isBerserkActive: boolean = false;
@@ -286,7 +286,7 @@ export class PlayerEngine {
     groundPoundShockwave?: THREE.Vector3;
     hvbPunch?: boolean;
     flashbangGrenade?: boolean;
-    coinToss?: boolean;
+    ricochetShot?: boolean;
   } {
     if (this.isDead) return {};
 
@@ -294,7 +294,7 @@ export class PlayerEngine {
       groundPoundShockwave?: THREE.Vector3;
       hvbPunch?: boolean;
       flashbangGrenade?: boolean;
-      coinToss?: boolean;
+      ricochetShot?: boolean;
     } = {};
 
     // 1. Dash Internal CD & Sequential Recharge
@@ -794,13 +794,12 @@ export class PlayerEngine {
     return true;
   }
 
-  public triggerSecondarySkill(): { coinToss?: boolean; flashbang?: boolean; berserk?: boolean } {
+  public triggerSecondarySkill(): { ricochetShot?: boolean; flashbang?: boolean; berserk?: boolean } {
     if (this.isDead) return {};
 
     if (this.currentWeapon === 'peacemaker' && this.coinCd <= 0) {
       this.coinCd = 4.0;
-      AudioEngine.playCoinToss();
-      return { coinToss: true };
+      return { ricochetShot: true };
     } else if (this.currentWeapon === 'trembler' && this.flashbangCd <= 0) {
       this.flashbangCd = 8.0;
       AudioEngine.playCoinToss();

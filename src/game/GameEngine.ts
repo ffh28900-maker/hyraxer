@@ -65,8 +65,6 @@ export class GameEngine {
   private punchAnimRatio: number = 0.2;
   private punchImpactTriggered: boolean = false;
 
-  private activeCoinMesh: THREE.Mesh | null = null;
-  private coinVelocity: THREE.Vector3 = new THREE.Vector3();
 
   private activeGrenadeMesh: THREE.Mesh | null = null;
   private grenadeVelocity: THREE.Vector3 = new THREE.Vector3();
@@ -109,6 +107,11 @@ export class GameEngine {
   private nearPlayerMeshes: THREE.Object3D[] = [];
   private nearPlayerMeshesOrigin = new THREE.Vector3(Infinity, Infinity, Infinity);
   private nearPlayerMeshesSource: THREE.Object3D[] | null = null;
+  private ricochetOrigin = new THREE.Vector3();
+  private ricochetDir = new THREE.Vector3();
+  private ricochetNormal = new THREE.Vector3();
+  private static readonly RICOCHET_MAX_BOUNCES = 4;
+  private static readonly RICOCHET_SEGMENT_RANGE = 60;
   private static readonly NEAR_MESH_RADIUS = 48;
   private static readonly NEAR_MESH_REFRESH_DIST_SQ = 25; // rebuild after ~5m of travel
   /** Muzzle refs resolved once per weapon switch (were getObjectByName'd every frame). */
@@ -127,7 +130,6 @@ export class GameEngine {
   private cachedGrappleHookMesh: THREE.Group | null = null;
   private cachedGrappleCableLine: THREE.Line | null = null;
   private cachedGrenadeMesh: THREE.Group | null = null;
-  private cachedCoinMesh: THREE.Mesh | null = null;
   /** Weapon viewmodels built once per weapon per session (were rebuilt+leaked per switch). */
   private weaponMeshCache = new Map<WeaponId, THREE.Group>();
   // Scratch vectors for updateGrappleHook (were per-frame allocations)
@@ -278,10 +280,6 @@ export class GameEngine {
     this.activeWeaponId = null;
     this.updateViewmodelMesh();
 
-    if (this.activeCoinMesh) {
-      this.levelData.scene.remove(this.activeCoinMesh);
-      this.activeCoinMesh = null;
-    }
     if (this.activeGrenadeMesh) {
       this.levelData.scene.remove(this.activeGrenadeMesh);
       this.activeGrenadeMesh = null;
@@ -716,19 +714,6 @@ export class GameEngine {
       this.bareFistGroup.visible = false;
     }
 
-    // 6. Coin Toss Animation Update
-    if (this.activeCoinMesh) {
-      this.activeCoinMesh.position.addScaledVector(this.coinVelocity, delta);
-      this.coinVelocity.y -= 18 * delta; // Gravity
-      this.activeCoinMesh.rotation.x += delta * 30;
-      this.activeCoinMesh.rotation.y += delta * 20;
-
-      if (this.activeCoinMesh.position.y <= 0.2) {
-        this.levelData.scene.remove(this.activeCoinMesh);
-        this.activeCoinMesh = null;
-      }
-    }
-
     // 7. Flashbang Grenade Physics Update
     if (this.activeGrenadeMesh) {
       this.activeGrenadeMesh.position.addScaledVector(this.grenadeVelocity, delta);
@@ -809,25 +794,7 @@ export class GameEngine {
       this.recoilYaw = (Math.random() - 0.5) * 0.04;
       this.muzzleFlashTimer = 0.06;
 
-      // Check Coin Shot Trick
-      if (this.activeCoinMesh && this.activeCoinMesh.position.distanceTo(this.player.position) < 25) {
-        // ULTRARICOSHET!
-        AudioEngine.playCoinToss();
-        this.addStylePoints(300, 'ULTRA RICOSHET COIN');
-        this.levelData.scene.remove(this.activeCoinMesh);
-        this.activeCoinMesh = null;
-
-        // Auto hit nearest enemy
-        const nearest = this.enemies.enemies.find((e) => !e.isDead);
-        if (nearest) {
-          nearest.hp -= 150;
-          this.damageNumbers.spawn(nearest.position, 150, false);
-          this.hitSplashes.spawn(nearest.position, false);
-          if (nearest.hp <= 0) this.enemies.killEnemy(nearest, true, this.addStylePoints);
-        }
-      } else {
-        this.shootRaycastDamage(25);
-      }
+      this.shootRaycastDamage(25);
     } else if (this.player.currentWeapon === 'trembler') {
       AudioEngine.playShotgun();
       this.recoilZ = 0.22;
@@ -872,28 +839,8 @@ export class GameEngine {
 
   public handleSecondarySkill() {
     const skill = this.player.triggerSecondarySkill();
-    if (skill.coinToss) {
-      this.addStylePoints(150, 'COIN TOSS TRICK');
-
-      // Spawn the session-cached 3D Shiny Coin in front of camera (was a fresh
-      // geometry+material per toss, removed without disposal)
-      if (!this.cachedCoinMesh) {
-        this.cachedCoinMesh = new THREE.Mesh(
-          ModelBuilder.getGeo('coin:disc', () => new THREE.CylinderGeometry(0.08, 0.08, 0.02, 16)),
-          ModelBuilder.getMaterial('coin:disc', () => new THREE.MeshBasicMaterial({ color: 0xffd700 }))
-        );
-      }
-      this.activeCoinMesh = this.cachedCoinMesh;
-
-      const forward = new THREE.Vector3();
-      this.player.camera.getWorldDirection(forward);
-      this.activeCoinMesh.position.copy(this.player.position).addScaledVector(forward, 0.8);
-      this.activeCoinMesh.position.y += 0.2;
-
-      this.coinVelocity.copy(forward).multiplyScalar(6);
-      this.coinVelocity.y = 7;
-
-      this.levelData.scene.add(this.activeCoinMesh);
+    if (skill.ricochetShot) {
+      this.fireRicochetShot();
     } else if (skill.flashbang) {
       if (this.activeGrenadeMesh) {
         this.levelData.scene.remove(this.activeGrenadeMesh);
@@ -920,6 +867,103 @@ export class GameEngine {
       this.addStylePoints(50, '💣 FLASHBANG THROWN');
     } else if (skill.berserk) {
       this.addStylePoints(300, 'BERSERK OVERDRIVE');
+    }
+  }
+
+  /**
+   * PEACEMAKER SKILL: a heavy shot that keeps bouncing off walls.
+   *
+   * Each segment is a normal weapon ray: it damages the first enemy it reaches, and when it
+   * meets a wall it reflects off the surface normal and continues, losing a little damage
+   * per bounce. Every segment draws its own tracer so the path is readable.
+   */
+  private fireRicochetShot() {
+    if (!this.enemies || !this.player || !this.levelData) return;
+
+    AudioEngine.playRifleShot(this.player.isBerserkActive);
+    this.recoilZ = 0.3;
+    this.recoilPitch = 0.5;
+    this.muzzleFlashTimer = 0.1;
+    this.addStylePoints(150, '🎯 RICOCHET SHOT');
+
+    const targets = this.getNearPlayerMeshes();
+    const origin = this.ricochetOrigin.copy(this.player.camera.position);
+    const dir = this.ricochetDir;
+    this.player.camera.getWorldDirection(dir);
+
+    let damage = 90;
+    let hitsLanded = 0;
+
+    for (let bounce = 0; bounce <= GameEngine.RICOCHET_MAX_BOUNCES; bounce++) {
+      this.shootRaycaster.set(origin, dir);
+      this.shootRaycaster.near = 0;
+      this.shootRaycaster.far = GameEngine.RICOCHET_SEGMENT_RANGE;
+      this.shootRaycaster.camera = this.player.camera;
+
+      // How far this segment travels before a wall stops it.
+      let wallDist = GameEngine.RICOCHET_SEGMENT_RANGE;
+      let wallHit: THREE.Intersection | null = null;
+      if (targets.length > 0) {
+        try {
+          const hits = this.shootRaycaster.intersectObjects(targets, false);
+          if (hits.length > 0) {
+            wallHit = hits[0];
+            wallDist = hits[0].distance;
+          }
+        } catch {
+          // Scene mutated mid-raycast - treat the segment as unobstructed.
+        }
+      }
+
+      // Closest enemy along the segment, in front of the wall.
+      let best: EnemyInstance | null = null;
+      let bestDist = wallDist;
+      for (let i = 0; i < this.enemies.enemies.length; i++) {
+        const enemy = this.enemies.enemies[i];
+        if (enemy.isDead || !enemy.mesh || !enemy.mesh.parent) continue;
+        this.tempEnemyCenter.copy(enemy.position);
+        this.tempEnemyCenter.y += 0.5;
+        const d = origin.distanceTo(this.tempEnemyCenter);
+        if (d >= bestDist) continue;
+        const hitRadius = enemy.isBoss ? 2.6 : 1.1;
+        if (this.shootRaycaster.ray.distanceToPoint(this.tempEnemyCenter) > hitRadius) continue;
+        bestDist = d;
+        best = enemy;
+      }
+
+      // Draw this leg of the path.
+      this.tempTracerEnd.copy(origin).addScaledVector(dir, best ? bestDist : wallDist);
+      if (this.tracers) {
+        this.tracers.spawnTracer(origin, this.tempTracerEnd, 'peacemaker', true);
+      }
+
+      if (best) {
+        const dealt = Math.round(damage * this.enemies.getIncomingDamageMultiplier(best, origin));
+        best.hp -= dealt;
+        hitsLanded++;
+        if (best.isRoomFrozen) this.enemies.unfreezeEnemy(best);
+        if (this.damageNumbers) this.damageNumbers.spawn(this.tempEnemyCenter, dealt, true);
+        if (best.hp <= 0) this.enemies.killEnemy(best, false, this.addStylePoints);
+        AudioEngine.playRicochetImpact();
+        // The shot stops on the enemy it hits; the remaining bounces are spent.
+        break;
+      }
+
+      if (!wallHit || !wallHit.face) break; // Open air - the shot flies off
+
+      // Reflect: d' = d - 2(d.n)n, nudged off the surface so the next cast does not
+      // immediately re-hit the same triangle.
+      this.ricochetNormal.copy(wallHit.face.normal).transformDirection(wallHit.object.matrixWorld);
+      const dot = dir.dot(this.ricochetNormal);
+      if (dot >= 0) break; // Grazing/back face - no clean bounce
+      dir.addScaledVector(this.ricochetNormal, -2 * dot).normalize();
+      origin.copy(wallHit.point).addScaledVector(this.ricochetNormal, 0.05);
+      damage *= 0.85;
+      AudioEngine.playRicochetImpact();
+    }
+
+    if (hitsLanded > 0) {
+      this.addStylePoints(150, '💥 RICOCHET HIT');
     }
   }
 
@@ -1778,7 +1822,6 @@ export class GameEngine {
       this.cachedGrappleHookMesh,
       this.cachedGrappleCableLine,
       this.cachedGrenadeMesh,
-      this.cachedCoinMesh,
     ]) {
       if (gadget && gadget.parent === scene) {
         scene.remove(gadget);
