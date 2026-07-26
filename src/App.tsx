@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayerProgress, LevelResult, WeaponId, RankGrade } from './types';
-import { GameEngine, HudState } from './game/GameEngine';
+import type { GameEngine, HudState } from './game/GameEngine';
 import { MainMenu } from './components/MainMenu';
 import { LevelSelect } from './components/LevelSelect';
 import { HUD } from './components/HUD';
@@ -149,6 +149,22 @@ export default function App() {
     AudioEngine.setVolumes(progress.settings.soundVolume, progress.settings.musicVolume);
   }, [progress.settings]);
 
+  // AudioContext lifecycle: create/resume on the first user gesture (autoplay policy) so
+  // menu SFX work before any level starts, and re-resume when the tab becomes visible
+  // again (a suspended context silently swallowed every sound before).
+  useEffect(() => {
+    const initAudio = () => AudioEngine.init();
+    window.addEventListener('pointerdown', initAudio, { once: true });
+    const onVisibilityChange = () => {
+      if (!document.hidden) AudioEngine.init();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('pointerdown', initAudio);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, []);
+
   // Safe Pointer Lock Request helper
   const safeRequestPointerLock = (element: HTMLElement | null) => {
     if (!element || document.pointerLockElement === element) return;
@@ -183,11 +199,19 @@ export default function App() {
   const handleRestartLevel = useCallback(() => startLevel(activeLevelNumber), [activeLevelNumber]);
   const handleExitToMenu = useCallback(() => setGameState('menu'), []);
 
-  // Setup GameEngine instance when entering 'playing' state
+  // Setup GameEngine instance when entering 'playing' state.
+  // PERF: the engine module (three.js + ~13k lines of game code) is loaded on demand so
+  // the menu paints without downloading/parsing the whole engine bundle first.
   useEffect(() => {
     if (gameState !== 'playing' || !canvasContainerRef.current) return;
 
-    const engine = new GameEngine(
+    let cancelled = false;
+    let activeCleanup: (() => void) | null = null;
+
+    import('./game/GameEngine').then(({ GameEngine }) => {
+      if (cancelled || !canvasContainerRef.current) return;
+
+      const engine = new GameEngine(
       canvasContainerRef.current,
       (hud) => setHudState(hud),
       (result, unlockedNewWeapon) => {
@@ -347,18 +371,27 @@ export default function App() {
     window.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('contextmenu', handleContextMenu);
 
+      activeCleanup = () => {
+        window.removeEventListener('keydown', handleKeyDown);
+        window.removeEventListener('keyup', handleKeyUp);
+        window.removeEventListener('wheel', handleWheel);
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mousedown', handleMouseDown);
+        window.removeEventListener('mouseup', handleMouseUp);
+        window.removeEventListener('contextmenu', handleContextMenu);
+        document.removeEventListener('pointerlockerror', handlePointerLockError);
+        containerEl.removeEventListener('click', handleCanvasClick);
+        engine.destroy();
+        gameEngineRef.current = null;
+      };
+    });
+
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-      window.removeEventListener('wheel', handleWheel);
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mousedown', handleMouseDown);
-      window.removeEventListener('mouseup', handleMouseUp);
-      window.removeEventListener('contextmenu', handleContextMenu);
-      document.removeEventListener('pointerlockerror', handlePointerLockError);
-      containerEl.removeEventListener('click', handleCanvasClick);
-      engine.destroy();
-      gameEngineRef.current = null;
+      cancelled = true;
+      if (activeCleanup) {
+        activeCleanup();
+        activeCleanup = null;
+      }
     };
   }, [gameState, activeLevelNumber, sessionNonce]);
 

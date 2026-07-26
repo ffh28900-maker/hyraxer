@@ -427,12 +427,12 @@ class AudioEngineClass {
     return this.cachedNoiseBuffer;
   }
 
-  private playNoiseBlast(duration: number, volume: number) {
+  private playNoiseBlast(duration: number, volume: number, when?: number) {
     if (!this.ctx) return;
     const buffer = this.getNoiseBuffer();
     if (!buffer) return;
 
-    const now = this.ctx.currentTime;
+    const now = when ?? this.ctx.currentTime;
     const noise = this.ctx.createBufferSource();
     noise.buffer = buffer;
 
@@ -462,12 +462,25 @@ class AudioEngineClass {
     this.beatStep = 0;
     this.currentTempoBpm = isSecretLevel ? 150 : isBossLevel ? 145 : 138;
 
-    const intervalMs = (60 / this.currentTempoBpm / 4) * 1000; // 16th notes
+    // Audio-clock lookahead scheduler. The old version fired a setInterval exactly on
+    // every 16th note and scheduled each hit at ctx.currentTime with ZERO lookahead - so
+    // any GC pause or frame spike audibly smeared the beat, and background-tab timer
+    // clamping (>=1s) collapsed it entirely. Now a coarse 25ms tick schedules all notes
+    // up to 120ms ahead on the audio clock; jitter in the tick no longer reaches the ear.
+    const stepDur = 60 / this.currentTempoBpm / 4; // 16th note duration (sec)
+    this.nextNoteTime = (this.ctx ? this.ctx.currentTime : 0) + 0.05;
 
     this.musicInterval = window.setInterval(() => {
-      this.tickMusicBeat(isBossLevel, isSecretLevel);
-    }, intervalMs);
+      if (!this.ctx || !this.isMusicPlaying) return;
+      const horizon = this.ctx.currentTime + 0.12;
+      while (this.nextNoteTime < horizon) {
+        this.tickMusicBeat(isBossLevel, isSecretLevel, this.nextNoteTime);
+        this.nextNoteTime += stepDur;
+      }
+    }, 25);
   }
+
+  private nextNoteTime = 0;
 
   public stopMusic() {
     this.isMusicPlaying = false;
@@ -477,9 +490,9 @@ class AudioEngineClass {
     }
   }
 
-  private tickMusicBeat(isBoss: boolean, isSecret: boolean) {
+  private tickMusicBeat(isBoss: boolean, isSecret: boolean, when?: number) {
     if (!this.ctx || this.musicVol <= 0) return;
-    const now = this.ctx.currentTime;
+    const now = when ?? this.ctx.currentTime;
     const step = this.beatStep % 16;
     this.beatStep++;
 
@@ -500,7 +513,7 @@ class AudioEngineClass {
 
     // Snare on steps 4, 12
     if (step === 4 || step === 12) {
-      this.playNoiseBlast(0.12, 0.4 * this.musicVol);
+      this.playNoiseBlast(0.12, 0.4 * this.musicVol, now);
     }
 
     // Heavy Wobble Bass on step % 2 === 0
