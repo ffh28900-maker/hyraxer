@@ -1708,6 +1708,21 @@ export class GameEngine {
       scene.remove(this.player.camera);
     }
 
+    // Session-cached gadget meshes also outlive the level (they may still be parented to
+    // the dying scene if the level ended mid-grapple/throw/toss) - detach them so the
+    // traversal below can't dispose their reusable resources (the cable's geometry is
+    // per-instance and mutated in place, so a disposal here would be reused next level).
+    for (const gadget of [
+      this.cachedGrappleHookMesh,
+      this.cachedGrappleCableLine,
+      this.cachedGrenadeMesh,
+      this.cachedCoinMesh,
+    ]) {
+      if (gadget && gadget.parent === scene) {
+        scene.remove(gadget);
+      }
+    }
+
     const disposedGeometries = new Set<THREE.BufferGeometry>();
     const disposedMaterials = new Set<THREE.Material>();
 
