@@ -239,7 +239,11 @@ export class PlayerEngine {
   public currentCamHeight: number = 1.8;
 
   constructor() {
-    this.camera = new THREE.PerspectiveCamera(85, window.innerWidth / window.innerHeight, 0.01, 1000);
+    // PERF: near 0.03 / far 260 instead of 0.01 / 1000. FogExp2(0.012) is >99% opaque by
+    // ~200m and no sightline exceeds ~120m, so 800 units of depth range bought nothing -
+    // while the 1:100000 near/far ratio starved the depth buffer and z-fought the many
+    // coplanar 5mm-offset trim plates. Near stays below the closest viewmodel geometry.
+    this.camera = new THREE.PerspectiveCamera(85, window.innerWidth / window.innerHeight, 0.03, 260);
     this.camera.rotation.order = 'YXZ';
     this.position = new THREE.Vector3(0, 1.8, 5);
     this.velocity = new THREE.Vector3(0, 0, 0);

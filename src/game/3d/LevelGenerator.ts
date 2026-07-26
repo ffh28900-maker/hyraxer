@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EnemyType } from '../../types';
 import { TextureGenerator } from './TextureGenerator';
 import { ModelBuilder } from './ModelBuilder';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 export interface RoomBarrier {
   roomId: number;
@@ -3239,6 +3240,69 @@ export class LevelGenerator {
     return group;
   }
 
+  /**
+   * PERF: collapse a prop group's unnamed decorative meshes into one merged mesh per
+   * material. A single ramp used to be ~260 separate meshes (treads, rails, posts, bolts,
+   * stripes) = ~260 draw calls; merged it renders in ~6. Collision semantics are
+   * unchanged: named meshes (e.g. the 'ground' slab) are left untouched, the merged
+   * output contains byte-identical triangles, and call sites rename it 'ground' exactly
+   * like they renamed the individual parts - vertical probes still hit the same surfaces.
+   *
+   * Only safe for groups whose children end up named 'ground' (or stay decorative):
+   * 'wall'-named parts feed the player's per-part AABB ejection, where merging would
+   * inflate the ejection box to the whole prop. Do not use on wall-named props.
+   */
+  private static mergeStaticGroup(group: THREE.Group): THREE.Group {
+    group.updateMatrixWorld(true);
+
+    const buckets = new Map<THREE.Material, THREE.Mesh[]>();
+    group.traverse((child) => {
+      if (
+        child instanceof THREE.Mesh &&
+        child.name === '' &&
+        !Array.isArray(child.material)
+      ) {
+        let list = buckets.get(child.material);
+        if (!list) {
+          list = [];
+          buckets.set(child.material, list);
+        }
+        list.push(child);
+      }
+    });
+
+    const inverseGroup = new THREE.Matrix4().copy(group.matrixWorld).invert();
+    const relative = new THREE.Matrix4();
+
+    for (const [material, meshes] of buckets) {
+      if (meshes.length < 2) continue;
+
+      const geos: THREE.BufferGeometry[] = [];
+      for (const mesh of meshes) {
+        const g = mesh.geometry.clone();
+        relative.copy(inverseGroup).multiply(mesh.matrixWorld);
+        g.applyMatrix4(relative);
+        geos.push(g);
+      }
+
+      const merged = mergeGeometries(geos, false);
+      if (!merged) continue; // attribute mismatch - keep the originals as-is
+
+      for (const mesh of meshes) {
+        mesh.parent?.remove(mesh);
+        // Shared cached geometries stay alive for other props; private ones are done.
+        if (!ModelBuilder.isCachedResource(mesh.geometry)) {
+          mesh.geometry.dispose();
+        }
+      }
+
+      const mergedMesh = new THREE.Mesh(merged, material);
+      group.add(mergedMesh);
+    }
+
+    return group;
+  }
+
   public static createUltraDetailedSlopeRampGroup(
     width: number,
     length: number,
@@ -3377,7 +3441,8 @@ export class LevelGenerator {
       }
     });
 
-    return group;
+    // PERF: ~260 decorative meshes -> ~6 merged draw calls (slab keeps its own mesh).
+    return LevelGenerator.mergeStaticGroup(group);
   }
 
   public static createUltraDetailedStagePlatform(
@@ -3497,7 +3562,8 @@ export class LevelGenerator {
       group.add(beam);
     }
 
-    return group;
+    // PERF: ~100 decorative meshes -> ~6 merged draw calls (deck keeps its own mesh).
+    return LevelGenerator.mergeStaticGroup(group);
   }
 
   public static createUltraDetailedCommandHubPedestal(): THREE.Group {
