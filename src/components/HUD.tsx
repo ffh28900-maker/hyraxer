@@ -53,7 +53,7 @@ const FpsCounter: React.FC = React.memo(() => {
   };
 
   return (
-    <div className={`mt-2.5 bg-[#050505]/90 border backdrop-blur px-2.5 py-1 rounded flex items-center justify-between font-mono text-[10px] shadow-lg transition-colors ${getFpsColor()}`}>
+    <div className={`mt-2.5 bg-[#050505]/95 border px-2.5 py-1 rounded flex items-center justify-between font-mono text-[10px] shadow-lg transition-colors ${getFpsColor()}`}>
       <div className="flex items-center gap-1.5 font-bold tracking-wider">
         <div className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
         <span>⚡ FPS: {fps}</span>
@@ -85,7 +85,10 @@ const translateBossName = (name?: string) => {
   }
 };
 
-export const HUD: React.FC<HUDProps> = ({ hud, onRestartLevel, onExitToMenu }) => {
+// PERF: memoised - with GameEngine's quantised change detection and stable callbacks from
+// App, this ~70-element tree now reconciles only when a HUD value actually changes instead
+// of every animation frame during combat.
+export const HUD: React.FC<HUDProps> = React.memo(({ hud, onRestartLevel, onExitToMenu }) => {
   const [showHelp, setShowHelp] = useState(false);
 
   return (
@@ -162,7 +165,7 @@ export const HUD: React.FC<HUDProps> = ({ hud, onRestartLevel, onExitToMenu }) =
       {/* TOP BAR: Boss HP or Style Rank */}
       <div className="w-full flex items-start justify-between z-20">
         {/* TOP LEFT: Health & Dash */}
-        <div className="bg-[#050505]/90 backdrop-blur border-l-2 border-[#C41E3A] border-y border-r border-white/10 p-4 rounded-r-lg shadow-2xl min-w-[260px]">
+        <div className="bg-[#050505]/95 border-l-2 border-[#C41E3A] border-y border-r border-white/10 p-4 rounded-r-lg shadow-2xl min-w-[260px]">
           <div className="flex items-center justify-between mb-1">
             <span className="text-[10px] font-black uppercase tracking-widest text-[#C41E3A]">ЗДОРОВЬЕ</span>
             <span className="text-xl font-black italic text-white">{hud.hp}%</span>
@@ -212,7 +215,7 @@ export const HUD: React.FC<HUDProps> = ({ hud, onRestartLevel, onExitToMenu }) =
         )}
 
         {/* TOP RIGHT: Style Rank Meter */}
-        <div className="bg-[#050505]/90 backdrop-blur border-r-2 border-[#8B5CF6] border-y border-l border-white/10 p-4 text-right shadow-2xl min-w-[220px]">
+        <div className="bg-[#050505]/95 border-r-2 border-[#8B5CF6] border-y border-l border-white/10 p-4 text-right shadow-2xl min-w-[220px]">
           <div className="text-[10px] uppercase tracking-widest text-[#8B5CF6] font-bold">РАНГ СТИЛЯ</div>
           <div
             className="text-3xl font-black italic tracking-tighter transition-all my-1 transform -skew-x-6"
@@ -221,7 +224,7 @@ export const HUD: React.FC<HUDProps> = ({ hud, onRestartLevel, onExitToMenu }) =
             {hud.styleRank.name}
           </div>
           <div className="text-2xl font-black text-white font-mono">{hud.styleScore} ОЧКОВ</div>
-          <div className="text-[10px] text-amber-400 uppercase font-bold animate-pulse mt-1">
+          <div className="text-[10px] text-amber-400 uppercase font-bold mt-1">
             + {hud.styleActionText}
           </div>
         </div>
@@ -265,7 +268,7 @@ export const HUD: React.FC<HUDProps> = ({ hud, onRestartLevel, onExitToMenu }) =
         </div>
 
         {/* BOTTOM RIGHT: Active Weapon & Skill CD */}
-        <div className="bg-[#050505]/90 backdrop-blur border-r-2 border-[#C41E3A] border-y border-l border-white/10 p-4 text-right min-w-[240px] shadow-2xl">
+        <div className="bg-[#050505]/95 border-r-2 border-[#C41E3A] border-y border-l border-white/10 p-4 text-right min-w-[240px] shadow-2xl">
           <div className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">ОРУЖИЕ</div>
           <div className="text-xl font-black text-white uppercase tracking-wider my-1 font-mono">
             {translateWeapon(hud.currentWeapon)}
@@ -288,7 +291,7 @@ export const HUD: React.FC<HUDProps> = ({ hud, onRestartLevel, onExitToMenu }) =
       <div className="pointer-events-auto absolute top-6 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
         {/* Enemy Counter Badge */}
         {hud.totalEnemiesCount > 0 && (
-          <div className="bg-[#050505]/95 border border-[#C41E3A]/70 px-4 py-1.5 rounded-full flex items-center gap-2.5 shadow-[0_0_20px_rgba(196,30,58,0.35)] backdrop-blur">
+          <div className="bg-[#050505]/95 border border-[#C41E3A]/70 px-4 py-1.5 rounded-full flex items-center gap-2.5 shadow-[0_0_20px_rgba(196,30,58,0.35)]">
             <span className="text-[11px] font-black uppercase tracking-widest text-[#C41E3A] flex items-center gap-1">
               💀 ВРАГОВ ОСТАЛОСЬ:
             </span>
@@ -306,7 +309,7 @@ export const HUD: React.FC<HUDProps> = ({ hud, onRestartLevel, onExitToMenu }) =
           </div>
         )}
 
-        <div className="flex items-center gap-2 bg-[#050505]/90 border border-white/10 p-1.5 rounded-full shadow-2xl backdrop-blur">
+        <div className="flex items-center gap-2 bg-[#050505]/95 border border-white/10 p-1.5 rounded-full shadow-2xl">
           <button
             onClick={() => setShowHelp(!showHelp)}
             className="hover:bg-[#1f1f1f] border border-white/10 text-gray-300 text-xs px-3.5 py-1.5 rounded-full flex items-center gap-1.5 transition"
@@ -367,4 +370,5 @@ export const HUD: React.FC<HUDProps> = ({ hud, onRestartLevel, onExitToMenu }) =
       )}
     </div>
   );
-};
+});
+HUD.displayName = 'HUD';

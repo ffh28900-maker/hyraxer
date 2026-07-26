@@ -139,7 +139,24 @@ export class GameEngine {
   private currentPlayerRoomId: number = 1;
 
   // Cached HUD state tracking to prevent unnecessary React re-renders
-  private lastHudStateJson: string = '';
+  private lastHudSnapshot = {
+    hp: -1,
+    dashCharges: -1,
+    weapon: '' as string,
+    hvbCdRatio: -1,
+    grappleCdRatio: -1,
+    skillCdRatio: -1,
+    styleScore: -1,
+    styleActionText: '',
+    flashbangIntensity: -1,
+    berserkActive: false,
+    isChargingPunch: false,
+    punchChargeRatio: -1,
+    bossHpRatio: undefined as number | undefined,
+    levelTimeSec: -1,
+    killsCount: -1,
+    aliveEnemiesCount: -1,
+  };
 
   // Level stats
   public currentLevelNumber: number = 1;
@@ -1449,23 +1466,61 @@ export class GameEngine {
     if (this.player.currentWeapon === 'punisher') skillCdRatio = this.player.berserkCd / 25.0;
 
     const hp = Math.ceil(this.player.hp);
-    const hvbCdRatio = Math.round((this.player.hvbCooldown / this.player.maxHvbCd) * 100) / 100;
-    const grappleCdRatio = Math.round((this.player.grappleCooldown / this.player.maxGrappleCd) * 100) / 100;
-    const roundedSkillCd = Math.round(skillCdRatio * 100) / 100;
-    const flashbangIntensity = Math.round(this.player.flashbangIntensity * 100) / 100;
-    const punchChargeRatio = Math.round(this.player.punchChargeRatio * 100) / 100;
+    // PERF: cooldown-style ratios are quantised to 0.05 steps. The old 0.01 quantisation
+    // was finer than one frame of cooldown decay, so the change-detection "fast path"
+    // never held during combat and the whole HUD re-rendered at up to 60 Hz.
+    const q = (x: number) => Math.round(x * 20) / 20;
+    const hvbCdRatio = q(this.player.hvbCooldown / this.player.maxHvbCd);
+    const grappleCdRatio = q(this.player.grappleCooldown / this.player.maxGrappleCd);
+    const roundedSkillCd = q(skillCdRatio);
+    const flashbangIntensity = q(this.player.flashbangIntensity);
+    const punchChargeRatio = q(this.player.punchChargeRatio);
     const levelTimeSec = Math.floor(this.levelTimeSec);
     // PERF: counter instead of a second per-frame scan over every enemy.
     const deadEnemiesCount = this.enemies ? this.enemies.deadCount : 0;
     this.killsCount = deadEnemiesCount;
     const aliveEnemiesCount = Math.max(0, this.totalEnemiesCount - deadEnemiesCount);
-    const bossHpRatio = isPlayerInBossRoom && boss ? Math.round((boss.hp / boss.maxHp) * 100) / 100 : undefined;
+    const bossHpRatio = isPlayerInBossRoom && boss ? q(boss.hp / boss.maxHp) : undefined;
 
-    // Fast change detection key string to avoid triggering React re-renders every frame when state hasn't changed
-    const key = `${hp}_${this.player.dashCharges}_${this.player.currentWeapon}_${hvbCdRatio}_${grappleCdRatio}_${roundedSkillCd}_${this.styleScore}_${this.styleActionText}_${flashbangIntensity}_${this.player.isBerserkActive}_${this.player.isChargingPunch}_${punchChargeRatio}_${bossHpRatio}_${levelTimeSec}_${this.killsCount}_${aliveEnemiesCount}`;
-
-    if (key === this.lastHudStateJson) return;
-    this.lastHudStateJson = key;
+    // PERF: field-by-field change detection against the previous snapshot - no template
+    // string (16 number->string conversions) built per frame just to compare.
+    const s = this.lastHudSnapshot;
+    if (
+      s.hp === hp &&
+      s.dashCharges === this.player.dashCharges &&
+      s.weapon === this.player.currentWeapon &&
+      s.hvbCdRatio === hvbCdRatio &&
+      s.grappleCdRatio === grappleCdRatio &&
+      s.skillCdRatio === roundedSkillCd &&
+      s.styleScore === this.styleScore &&
+      s.styleActionText === this.styleActionText &&
+      s.flashbangIntensity === flashbangIntensity &&
+      s.berserkActive === this.player.isBerserkActive &&
+      s.isChargingPunch === this.player.isChargingPunch &&
+      s.punchChargeRatio === punchChargeRatio &&
+      s.bossHpRatio === bossHpRatio &&
+      s.levelTimeSec === levelTimeSec &&
+      s.killsCount === this.killsCount &&
+      s.aliveEnemiesCount === aliveEnemiesCount
+    ) {
+      return;
+    }
+    s.hp = hp;
+    s.dashCharges = this.player.dashCharges;
+    s.weapon = this.player.currentWeapon;
+    s.hvbCdRatio = hvbCdRatio;
+    s.grappleCdRatio = grappleCdRatio;
+    s.skillCdRatio = roundedSkillCd;
+    s.styleScore = this.styleScore;
+    s.styleActionText = this.styleActionText;
+    s.flashbangIntensity = flashbangIntensity;
+    s.berserkActive = this.player.isBerserkActive;
+    s.isChargingPunch = this.player.isChargingPunch;
+    s.punchChargeRatio = punchChargeRatio;
+    s.bossHpRatio = bossHpRatio;
+    s.levelTimeSec = levelTimeSec;
+    s.killsCount = this.killsCount;
+    s.aliveEnemiesCount = aliveEnemiesCount;
 
     this.onHudUpdate({
       hp,

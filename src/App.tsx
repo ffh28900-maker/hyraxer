@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { PlayerProgress, LevelResult, WeaponId, RankGrade } from './types';
 import { GameEngine, HudState } from './game/GameEngine';
 import { MainMenu } from './components/MainMenu';
@@ -177,6 +177,11 @@ export default function App() {
       safeRequestPointerLock(canvasContainerRef.current);
     }, 150);
   };
+
+  // PERF: stable callback identities so React.memo(HUD) is effective - inline arrows here
+  // used to force full HUD reconciliation on every App render.
+  const handleRestartLevel = useCallback(() => startLevel(activeLevelNumber), [activeLevelNumber]);
+  const handleExitToMenu = useCallback(() => setGameState('menu'), []);
 
   // Setup GameEngine instance when entering 'playing' state
   useEffect(() => {
@@ -442,8 +447,8 @@ export default function App() {
           {hudState && (
             <HUD
               hud={hudState}
-              onRestartLevel={() => startLevel(activeLevelNumber)}
-              onExitToMenu={() => setGameState('menu')}
+              onRestartLevel={handleRestartLevel}
+              onExitToMenu={handleExitToMenu}
             />
           )}
 
