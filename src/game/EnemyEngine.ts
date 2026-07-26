@@ -535,10 +535,31 @@ export class EnemyEngine {
     }
   }
 
+  /** Child names that are animated at runtime (see EnemyAnimParts) - everything else is frozen. */
+  private static readonly ANIMATED_PART_NAMES = new Set([
+    'leg_FL', 'leg_RR', 'leg_FR', 'leg_RL',
+    'ultrafan_blades', 'minigun_barrels',
+    'boss_mouth_jaw', 'mouth_rpg', 'robo_arm', 'robo_right_arm',
+  ]);
+
   public spawnEnemy(type: EnemyType, position: THREE.Vector3, roomId: number = 1): EnemyInstance {
     const mesh = ModelBuilder.createEnemyMesh(type);
     mesh.position.copy(position);
     this.scene.add(mesh);
+
+    // PERF: enemy models are 100+ child meshes but only the few named animated parts ever
+    // change their local transform. Freezing the rest skips their local matrix recompose in
+    // the per-frame matrixWorld cascade (the root stays auto - it moves every frame).
+    mesh.traverse((child) => {
+      if (child === mesh) return;
+      if (!EnemyEngine.ANIMATED_PART_NAMES.has(child.name)) {
+        child.updateMatrix();
+        child.matrixAutoUpdate = false;
+      }
+    });
+    // Enemies can spawn frozen (streamed in ahead of the player); make the world matrix
+    // valid immediately so the first rendered frame is never at the origin.
+    mesh.updateMatrixWorld(true);
 
     let maxHp = 40;
     let isBoss = false;
@@ -651,6 +672,13 @@ export class EnemyEngine {
     if (enemy.isRoomFrozen) {
       enemy.isRoomFrozen = false;
       enemy.isAggroed = true;
+      // Restore per-frame matrix updates (see the freeze in update()).
+      if (!enemy.mesh.matrixWorldAutoUpdate) {
+        enemy.mesh.matrixAutoUpdate = true;
+        enemy.mesh.matrixWorldAutoUpdate = true;
+        enemy.mesh.updateMatrix();
+        enemy.mesh.updateMatrixWorld(true);
+      }
     }
   }
 
@@ -712,6 +740,12 @@ export class EnemyEngine {
       if (!inPlayerRoom) {
         enemy.isRoomFrozen = true;
         enemy.telegraphTimer = 0;
+        // PERF: a frozen enemy never mutates its transform (this `continue` precedes all
+        // movement/animation), so drop its whole subtree out of the per-frame matrix walk.
+        if (enemy.mesh.matrixWorldAutoUpdate) {
+          enemy.mesh.matrixAutoUpdate = false;
+          enemy.mesh.matrixWorldAutoUpdate = false;
+        }
         continue; // AI logic paused, skip movement and attacks
       } else {
         if (enemy.isRoomFrozen) {

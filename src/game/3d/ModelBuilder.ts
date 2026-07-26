@@ -7,14 +7,14 @@ export class ModelBuilder {
   private static materialsCache: Map<string, THREE.Material> = new Map();
   private static geometryCache: Map<string, THREE.BufferGeometry> = new Map();
 
-  private static getMaterial(key: string, creator: () => THREE.Material): THREE.Material {
+  public static getMaterial(key: string, creator: () => THREE.Material): THREE.Material {
     if (!this.materialsCache.has(key)) {
       this.materialsCache.set(key, creator());
     }
     return this.materialsCache.get(key)!;
   }
 
-  private static getGeo(key: string, creator: () => THREE.BufferGeometry): THREE.BufferGeometry {
+  public static getGeo(key: string, creator: () => THREE.BufferGeometry): THREE.BufferGeometry {
     if (!this.geometryCache.has(key)) {
       this.geometryCache.set(key, creator());
     }

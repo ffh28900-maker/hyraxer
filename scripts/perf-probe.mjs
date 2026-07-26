@@ -59,9 +59,9 @@ await page.click(`text=#${levelNum}`);
 step('level clicked');
 
 // Wait for the engine to exist and the first frames to render (level gen + shader prewarm).
-await page.waitForFunction(() => !!window.__engine, { timeout: 300000 });
+await page.waitForFunction(() => !!window.__engine, null, { timeout: 300000 });
 step('engine exists');
-await page.waitForFunction(() => window.__engine.levelTimeSec > 0.2, { timeout: 300000 });
+await page.waitForFunction(() => window.__engine.levelTimeSec > 0.2, null, { timeout: 300000 });
 step('simulation running');
 await page.waitForTimeout(2000);
 
@@ -142,7 +142,7 @@ step('gadget leak probe done');
 for (let i = 0; i < 2; i++) {
   await page.evaluate(() => { window.__engine.levelTimeSec = 0; });
   await page.keyboard.press('r');
-  await page.waitForFunction(() => window.__engine && window.__engine.levelTimeSec > 0.2, { timeout: 300000 });
+  await page.waitForFunction(() => window.__engine && window.__engine.levelTimeSec > 0.2, null, { timeout: 300000 });
   step(`restart ${i + 1} done`);
 }
 await page.waitForTimeout(2000);

@@ -281,6 +281,12 @@ export class GameEngine {
     // Make every world matrix valid up front: the player/enemy collision caches snapshot
     // world AABBs lazily on first use, which may happen before the first render.
     this.levelData.scene.updateMatrixWorld(true);
+    // PERF: with world matrices now valid, prune the static level geometry from the
+    // renderer's per-frame updateMatrixWorld walk entirely. Only roots present at
+    // generation time are frozen - camera, enemies, FX and projectiles stay dynamic.
+    for (const root of this.levelData.staticRoots) {
+      root.matrixWorldAutoUpdate = false;
+    }
     this.killsCount = 0;
     this.autoFinishTimer = 0.6;
     // Keep totalEnemiesCount set from this.levelData.enemySpawns.length!
