@@ -100,6 +100,17 @@ export class GameEngine {
   private tempSpreadDir = new THREE.Vector3();
   private cachedLevelMeshes: THREE.Object3D[] | null = null;
   private nearMeshesTemp: THREE.Object3D[] = [];
+  /** Muzzle refs resolved once per weapon switch (were getObjectByName'd every frame). */
+  private muzzleFlashMesh: THREE.Mesh | null = null;
+  private muzzleFlashLight: THREE.PointLight | null = null;
+  /** LED ref resolved once per grenade throw (was getObjectByName'd every frame). */
+  private activeGrenadeLed: THREE.Mesh | null = null;
+  /** Frame-clocked auto punch release for the HVB quick-punch (replaces a setTimeout). */
+  private pendingAutoPunchRelease = 0;
+  // Scratch vectors for updateGrappleHook (were per-frame allocations)
+  private tempGrappleOrigin = new THREE.Vector3();
+  private tempGrapplePull = new THREE.Vector3();
+  private tempGrappleLook = new THREE.Vector3();
 
   /** Room-geometry visibility + point-light budgeting. See SceneCuller for rationale. */
   private culler: SceneCuller | null = null;
@@ -151,6 +162,11 @@ export class GameEngine {
     this.onHudUpdate = onHudUpdate;
     this.onLevelFinish = onLevelFinish;
     this.onPlayerDeath = onPlayerDeath;
+
+    // Dev-only hook for the headless perf probe (scripts/perf-probe.mjs). Tree-shaken from builds.
+    if (import.meta.env.DEV) {
+      (window as unknown as { __engine?: GameEngine }).__engine = this;
+    }
 
     this.renderer = new THREE.WebGLRenderer({
       antialias: true,
@@ -261,6 +277,10 @@ export class GameEngine {
 
     this.cachedLevelMeshes = null;
     this.enemies.invalidateObstacleCache();
+    this.player.invalidateWallCache();
+    // Make every world matrix valid up front: the player/enemy collision caches snapshot
+    // world AABBs lazily on first use, which may happen before the first render.
+    this.levelData.scene.updateMatrixWorld(true);
     this.killsCount = 0;
     this.autoFinishTimer = 0.6;
     // Keep totalEnemiesCount set from this.levelData.enemySpawns.length!
@@ -340,10 +360,9 @@ export class GameEngine {
 
     // Uses the room id already resolved for this frame instead of re-scanning the room list.
     const currentRoomId = this.currentPlayerRoomId;
-    const activeRoomIds = [currentRoomId, currentRoomId + 1];
 
     for (const room of this.levelData.rooms) {
-      if (activeRoomIds.includes(room.id)) {
+      if (room.id === currentRoomId || room.id === currentRoomId + 1) {
         if (!room.loaded) {
           room.loaded = true;
           this.spawnEnemiesForRoom(room.id);
@@ -364,6 +383,10 @@ export class GameEngine {
     const weaponMesh = ModelBuilder.createWeaponMesh(this.player.currentWeapon);
     this.viewmodelGroup.add(weaponMesh);
     this.activeWeaponId = this.player.currentWeapon;
+
+    // PERF: resolve muzzle refs once per switch instead of getObjectByName per frame.
+    this.muzzleFlashMesh = (this.viewmodelGroup.getObjectByName('muzzle_flash') as THREE.Mesh) ?? null;
+    this.muzzleFlashLight = (this.viewmodelGroup.getObjectByName('muzzle_light') as THREE.PointLight) ?? null;
 
     // Trigger weapon draw animation
     this.recoilPitch = -0.3;
@@ -435,28 +458,19 @@ export class GameEngine {
       }
 
       // Update enemies (reuses the room id resolved above)
+      // PERF: stable bound callbacks - three fresh closures used to be allocated here
+      // every frame (~180/s).
       const playerRoomId = this.currentPlayerRoomId;
       this.enemies.update(
         delta,
         this.player.position,
-        (dmg) => {
-          this.player.takeDamage(dmg);
-          this.damageTaken += dmg;
-          if (this.player.isDead) {
-            this.onPlayerDeath();
-          }
-        },
+        this.handleEnemyDamageToPlayer,
         this.addStylePoints,
-        (healAmount) => {
-          this.player.heal(healAmount);
-        },
+        this.handleEnemyHealPlayer,
         playerRoomId,
         this.levelData?.rooms,
         this.hitSplashes,
-        (slowDuration) => {
-          this.player.applySlow(slowDuration);
-          this.styleActionText = '⚠️ ЗАМЕДЛЕНИЕ (ПАУТИНА)';
-        }
+        this.handleEnemySlowPlayer
       );
 
       // Check room barriers unlock status
@@ -468,6 +482,15 @@ export class GameEngine {
       // Auto fire logic
       if (this.isPrimaryMouseDown) {
         this.handlePrimaryFire();
+      }
+
+      // Frame-clocked HVB auto punch release (replaces a setTimeout)
+      if (this.pendingAutoPunchRelease > 0) {
+        this.pendingAutoPunchRelease -= delta;
+        if (this.pendingAutoPunchRelease <= 0) {
+          this.pendingAutoPunchRelease = 0;
+          this.handlePunchRelease();
+        }
       }
 
       // Update Viewmodel & Weapon Animations
@@ -499,8 +522,10 @@ export class GameEngine {
     this.recoilYaw = THREE.MathUtils.lerp(this.recoilYaw, 0, delta * 28);
 
     // 3. Muzzle Flash Decay
-    const flashMesh = this.viewmodelGroup.getObjectByName('muzzle_flash') as THREE.Mesh;
-    const flashLight = this.viewmodelGroup.getObjectByName('muzzle_light') as THREE.PointLight;
+    // PERF: refs resolved once per weapon switch in updateViewmodelMesh - getObjectByName
+    // used to walk the whole viewmodel subtree twice per frame.
+    const flashMesh = this.muzzleFlashMesh;
+    const flashLight = this.muzzleFlashLight;
 
     if (this.muzzleFlashTimer > 0) {
       this.muzzleFlashTimer -= delta;
@@ -669,17 +694,24 @@ export class GameEngine {
     for (const barrier of this.levelData.roomBarriers) {
       if (!barrier.barrierMesh.parent) continue;
 
-      // Keep barriers completely unlocked and pass-through
-      barrier.unlocked = true;
-      barrier.barrierMesh.name = 'unlocked_barrier';
-      if (barrier.rearBarrierMesh) {
-        barrier.rearBarrierMesh.name = 'unlocked_barrier';
+      // Keep barriers completely unlocked and pass-through.
+      // PERF: the names are constant, so write them once instead of every frame (renaming
+      // also matters to PlayerEngine's wall cache, which filters by name).
+      if (!barrier.unlocked) {
+        barrier.unlocked = true;
+        barrier.barrierMesh.name = 'unlocked_barrier';
+        if (barrier.rearBarrierMesh) {
+          barrier.rearBarrierMesh.name = 'unlocked_barrier';
+        }
       }
 
-      // Check if player is near or inside room to trigger enemy spawns
-      const playerZ = this.player.position.z;
-      if (Math.abs(playerZ - barrier.roomZCenter) <= barrier.roomDepth / 2 + 10) {
-        this.spawnEnemiesForRoom(barrier.roomId);
+      // Check if player is near or inside room to trigger enemy spawns.
+      // PERF: pendingEnemySpawns is only scanned while the room still has pending entries.
+      if (this.pendingEnemySpawns.length > 0) {
+        const playerZ = this.player.position.z;
+        if (Math.abs(playerZ - barrier.roomZCenter) <= barrier.roomDepth / 2 + 10) {
+          this.spawnEnemiesForRoom(barrier.roomId);
+        }
       }
     }
   }
@@ -776,7 +808,9 @@ export class GameEngine {
       this.handlePunchRelease();
     } else {
       this.handlePunchStart();
-      setTimeout(() => this.handlePunchRelease(), 50);
+      // Frame-clocked instead of setTimeout: survives tab throttling and cannot fire after
+      // stop()/destroy().
+      this.pendingAutoPunchRelease = 0.05;
     }
   }
 
@@ -807,6 +841,8 @@ export class GameEngine {
 
       const grenadeGroup = ModelBuilder.createFlashbangGrenadeMesh();
       this.activeGrenadeMesh = grenadeGroup as unknown as THREE.Mesh;
+      // PERF: resolve the LED once per throw instead of getObjectByName per frame.
+      this.activeGrenadeLed = (grenadeGroup.getObjectByName('flashbang_led') as THREE.Mesh) ?? null;
 
       const forward = new THREE.Vector3();
       this.player.camera.getWorldDirection(forward);
@@ -891,6 +927,9 @@ export class GameEngine {
     this.levelData.scene.add(this.activeGrappleHookMesh);
 
     this.activeGrappleCableLine = ModelBuilder.createGrappleCableLine();
+    // The cable endpoints move every frame while its bounding sphere is computed once from
+    // the placeholder points, so frustum culling would hide it incorrectly.
+    this.activeGrappleCableLine.frustumCulled = false;
     this.levelData.scene.add(this.activeGrappleCableLine);
 
     this.grappleState = {
@@ -908,16 +947,16 @@ export class GameEngine {
     if (!this.grappleState || !this.activeGrappleHookMesh || !this.activeGrappleCableLine) return;
 
     // Origin anchored to screen center (camera position)
-    const origin = this.player.camera.position.clone();
+    // PERF: scratch vectors throughout - this method used to allocate 5-7 Vector3 per frame.
+    const origin = this.tempGrappleOrigin.copy(this.player.camera.position);
 
     const state = this.grappleState;
 
     if (state.phase === 'shooting') {
       // Dynamic tracking if target enemy moves
       if (state.targetEnemy && !state.targetEnemy.isDead) {
-        const enemyCenter = state.targetEnemy.position.clone();
-        enemyCenter.y += 0.5;
-        state.targetPos.copy(enemyCenter);
+        state.targetPos.copy(state.targetEnemy.position);
+        state.targetPos.y += 0.5;
         state.dir.subVectors(state.targetPos, state.currentPos).normalize();
       }
 
@@ -958,12 +997,11 @@ export class GameEngine {
         AudioEngine.playGrappleRetract();
       } else {
         // Stick 3D hook to enemy center
-        const enemyCenter = enemy.position.clone();
-        enemyCenter.y += 0.5;
-        state.currentPos.copy(enemyCenter);
+        state.currentPos.copy(enemy.position);
+        state.currentPos.y += 0.5;
 
         // Actively reel/drag enemy towards player
-        const pullDir = new THREE.Vector3().subVectors(origin, enemy.position);
+        const pullDir = this.tempGrapplePull.subVectors(origin, enemy.position);
         const distToPlayer = pullDir.length();
 
         if (distToPlayer <= 2.8) {
@@ -999,7 +1037,7 @@ export class GameEngine {
     } else if (state.phase === 'retracting') {
       this.player.isGrappling = false;
       this.player.grappleTargetPoint = null;
-      const retractDir = new THREE.Vector3().subVectors(origin, state.currentPos);
+      const retractDir = this.tempGrapplePull.subVectors(origin, state.currentPos);
       const distToPlayer = retractDir.length();
       const retractStep = 80.0 * delta;
 
@@ -1022,21 +1060,26 @@ export class GameEngine {
       this.activeGrappleHookMesh.position.copy(this.grappleState.currentPos);
 
       if (this.grappleState.phase === 'shooting') {
-        this.activeGrappleHookMesh.lookAt(this.grappleState.currentPos.clone().add(this.grappleState.dir));
+        this.activeGrappleHookMesh.lookAt(this.tempGrappleLook.copy(this.grappleState.currentPos).add(this.grappleState.dir));
       } else if (this.grappleState.phase === 'retracting' || this.grappleState.phase === 'attached_enemy' || this.grappleState.phase === 'attached_wall') {
         this.activeGrappleHookMesh.lookAt(origin);
       }
       this.activeGrappleHookMesh.rotation.z += delta * 20.0; // Claw spin animation
     }
 
-    // Update glowing Cable Line vertices between player origin and hook head
+    // Update glowing Cable Line vertices between player origin and hook head.
+    // PERF: mutate the existing attribute in place - replacing it every frame allocated a
+    // new Float32Array AND re-created the underlying GPU buffer.
     if (this.activeGrappleCableLine && this.grappleState) {
-      const positions = new Float32Array([
-        origin.x, origin.y, origin.z,
-        this.grappleState.currentPos.x, this.grappleState.currentPos.y, this.grappleState.currentPos.z,
-      ]);
-      this.activeGrappleCableLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      this.activeGrappleCableLine.geometry.attributes.position.needsUpdate = true;
+      const attr = this.activeGrappleCableLine.geometry.getAttribute('position') as THREE.BufferAttribute;
+      const arr = attr.array as Float32Array;
+      arr[0] = origin.x;
+      arr[1] = origin.y;
+      arr[2] = origin.z;
+      arr[3] = this.grappleState.currentPos.x;
+      arr[4] = this.grappleState.currentPos.y;
+      arr[5] = this.grappleState.currentPos.z;
+      attr.needsUpdate = true;
     }
   }
 
@@ -1056,7 +1099,8 @@ export class GameEngine {
     this.activeGrenadeMesh.rotation.z += delta * 8.0;
 
     // Blink top LED indicator faster as fuse timer nears 0
-    const led = this.activeGrenadeMesh.getObjectByName('flashbang_led') as THREE.Mesh;
+    // PERF: ref resolved once at throw time instead of getObjectByName per frame.
+    const led = this.activeGrenadeLed;
     if (led && led.material) {
       const blinkSpeed = this.grenadeTimer < 0.4 ? 40 : 18;
       const opacity = Math.sin(performance.now() * 0.001 * blinkSpeed) > 0 ? 1.0 : 0.2;
@@ -1195,6 +1239,24 @@ export class GameEngine {
   }
 
 
+  /** PERF: stable bound callbacks handed to EnemyEngine.update instead of per-frame closures. */
+  private handleEnemyDamageToPlayer = (dmg: number) => {
+    this.player.takeDamage(dmg);
+    this.damageTaken += dmg;
+    if (this.player.isDead) {
+      this.onPlayerDeath();
+    }
+  };
+
+  private handleEnemyHealPlayer = (healAmount: number) => {
+    this.player.heal(healAmount);
+  };
+
+  private handleEnemySlowPlayer = (slowDuration: number) => {
+    this.player.applySlow(slowDuration);
+    this.styleActionText = '⚠️ ЗАМЕДЛЕНИЕ (ПАУТИНА)';
+  };
+
   private addStylePoints = (pts: number, actionName: string) => {
     this.styleScore += pts;
     this.styleActionText = actionName;
@@ -1220,12 +1282,8 @@ export class GameEngine {
     const pPos = this.player.position;
     const fZone = this.levelData.finishZone;
 
-    let deadEnemiesCount = 0;
-    if (this.enemies) {
-      for (let i = 0; i < this.enemies.enemies.length; i++) {
-        if (this.enemies.enemies[i].isDead) deadEnemiesCount++;
-      }
-    }
+    // PERF: kill counter maintained by EnemyEngine.killEnemy instead of a per-frame scan.
+    const deadEnemiesCount = this.enemies ? this.enemies.deadCount : 0;
     this.killsCount = deadEnemiesCount;
     const remainingEnemiesCount = Math.max(0, this.totalEnemiesCount - deadEnemiesCount);
 
@@ -1335,13 +1393,14 @@ export class GameEngine {
     else if (this.styleScore > 600) styleRank = STYLE_RANKS[1]; // SAVAGE
 
     // Boss HP check - visible ONLY when player is in the boss room
-    const boss = this.enemies ? this.enemies.enemies.find((e) => e.isBoss && !e.isDead) : null;
+    // PERF: boss reference maintained at spawn/kill instead of a per-frame .find() scan.
+    const boss = this.enemies ? this.enemies.activeBoss : null;
     let isPlayerInBossRoom = false;
     if (boss && this.player) {
-      const distToBoss = this.player.position.distanceTo(boss.position);
+      const distToBossSq = this.player.position.distanceToSquared(boss.position);
       const zDiff = Math.abs(this.player.position.z - boss.position.z);
       const xDiff = Math.abs(this.player.position.x - boss.position.x);
-      if (distToBoss < 45.0 && zDiff < 38.0 && xDiff < 38.0) {
+      if (distToBossSq < 2025.0 && zDiff < 38.0 && xDiff < 38.0) {
         isPlayerInBossRoom = true;
       }
     }
@@ -1358,12 +1417,8 @@ export class GameEngine {
     const flashbangIntensity = Math.round(this.player.flashbangIntensity * 100) / 100;
     const punchChargeRatio = Math.round(this.player.punchChargeRatio * 100) / 100;
     const levelTimeSec = Math.floor(this.levelTimeSec);
-    let deadEnemiesCount = 0;
-    if (this.enemies) {
-      for (let i = 0; i < this.enemies.enemies.length; i++) {
-        if (this.enemies.enemies[i].isDead) deadEnemiesCount++;
-      }
-    }
+    // PERF: counter instead of a second per-frame scan over every enemy.
+    const deadEnemiesCount = this.enemies ? this.enemies.deadCount : 0;
     this.killsCount = deadEnemiesCount;
     const aliveEnemiesCount = Math.max(0, this.totalEnemiesCount - deadEnemiesCount);
     const bossHpRatio = isPlayerInBossRoom && boss ? Math.round((boss.hp / boss.maxHp) * 100) / 100 : undefined;
@@ -1509,11 +1564,11 @@ export class GameEngine {
       if (this.player.currentWeapon === 'trembler') {
         // Multi-pellet shotgun spread tracers
         for (let s = 0; s < 5; s++) {
-          this.tempSpreadDir.copy(this.shootDir).add(new THREE.Vector3(
-            (Math.random() - 0.5) * 0.12,
-            (Math.random() - 0.5) * 0.12,
-            (Math.random() - 0.5) * 0.12
-          )).normalize();
+          this.tempSpreadDir.copy(this.shootDir);
+          this.tempSpreadDir.x += (Math.random() - 0.5) * 0.12;
+          this.tempSpreadDir.y += (Math.random() - 0.5) * 0.12;
+          this.tempSpreadDir.z += (Math.random() - 0.5) * 0.12;
+          this.tempSpreadDir.normalize();
           this.tempTracerEnd.copy(camPos).addScaledVector(this.tempSpreadDir, Math.min(35.0, wallHitDistance));
           this.tracers.spawnTracer(this.tempTracerStart, this.tempTracerEnd, 'trembler', this.player.isBerserkActive);
         }

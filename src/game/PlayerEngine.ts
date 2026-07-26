@@ -88,6 +88,8 @@ export class PlayerEngine {
   private tempUpAxis = new THREE.Vector3(0, 1, 0);
   private tempNormal = new THREE.Vector3();
   private tempWorldPos = new THREE.Vector3();
+  private tempTotalMove = new THREE.Vector3();
+  private probeHeightsTemp = [0, 0, 0];
   private nearbyWallsTemp: THREE.Object3D[] = [];
 
   /**
@@ -102,20 +104,39 @@ export class PlayerEngine {
   private cachedWalls: THREE.Object3D[] = [];
   private wallCacheSource: THREE.Object3D[] | null = null;
 
-  /** Distance (squared) within which a wall is considered a raycast candidate. (60m radius) */
-  private static readonly WALL_NEAR_DIST_SQ = 3600;
+  /**
+   * PERF: static-geometry data cached alongside the wall list (same lifecycle):
+   * - a world AABB per wall (PASS 1 used to run Box3.setFromObject - a full subtree walk -
+   *   per candidate wall, per invocation, 2-5x per frame);
+   * - a world center + bounding radius per wall (collectNearbyWalls used to call
+   *   getWorldPosition - a parent-chain matrix multiply - per wall, per call, 3-6x/frame);
+   * - center/radius for ALL static meshes, so the vertical ground/ceiling probes can
+   *   pre-filter by XZ distance instead of raycasting the entire level.
+   */
+  private cachedWallBoxes: THREE.Box3[] = [];
+  private cachedWallCenters: THREE.Vector3[] = [];
+  private cachedWallRadii: number[] = [];
+  private cachedAllCenters: THREE.Vector3[] = [];
+  private cachedAllRadii: number[] = [];
+  private nearbyWallBoxesTemp: THREE.Box3[] = [];
+  private tempBox = new THREE.Box3();
+  private verticalCandidatesTemp: THREE.Object3D[] = [];
+  private allCacheSource: THREE.Object3D[] | null = null;
+  private cacheBox = new THREE.Box3();
 
   public invalidateWallCache() {
     this.wallCacheSource = null;
+    this.allCacheSource = null;
     this.cachedWalls.length = 0;
   }
-
-  private tempBox = new THREE.Box3();
 
   private getWalls(sceneObjects: THREE.Object3D[]): THREE.Object3D[] {
     if (this.wallCacheSource !== sceneObjects) {
       this.wallCacheSource = sceneObjects;
       this.cachedWalls.length = 0;
+      this.cachedWallBoxes.length = 0;
+      this.cachedWallCenters.length = 0;
+      this.cachedWallRadii.length = 0;
       for (let i = 0; i < sceneObjects.length; i++) {
         const o = sceneObjects[i];
         // NOTE: no o.visible check - room culling hides geometry the player isn't near,
@@ -128,10 +149,55 @@ export class PlayerEngine {
           o.name.includes('barrier')
         ) {
           this.cachedWalls.push(o);
+          const box = new THREE.Box3().setFromObject(o);
+          this.cachedWallBoxes.push(box);
+          const center = new THREE.Vector3();
+          box.getCenter(center);
+          this.cachedWallCenters.push(center);
+          this.cachedWallRadii.push(box.max.distanceTo(box.min) * 0.5);
         }
       }
     }
     return this.cachedWalls;
+  }
+
+  /** Builds the center/radius cache for the full static mesh list (vertical probes). */
+  private ensureAllMeshCache(sceneObjects: THREE.Object3D[]) {
+    if (this.allCacheSource === sceneObjects) return;
+    this.allCacheSource = sceneObjects;
+    this.cachedAllCenters.length = 0;
+    this.cachedAllRadii.length = 0;
+    for (let i = 0; i < sceneObjects.length; i++) {
+      this.cacheBox.setFromObject(sceneObjects[i]);
+      const center = new THREE.Vector3();
+      this.cacheBox.getCenter(center);
+      this.cachedAllCenters.push(center);
+      this.cachedAllRadii.push(
+        this.cacheBox.isEmpty() ? 0 : this.cacheBox.max.distanceTo(this.cacheBox.min) * 0.5
+      );
+    }
+  }
+
+  /**
+   * Candidates for a vertical (up/down) ray at the player's XZ. A vertical ray cannot hit
+   * a mesh whose bounding sphere is farther away in XZ than its radius (+1 m margin).
+   */
+  private collectVerticalRayCandidates(sceneObjects: THREE.Object3D[]): THREE.Object3D[] {
+    this.ensureAllMeshCache(sceneObjects);
+    const out = this.verticalCandidatesTemp;
+    out.length = 0;
+    const px = this.position.x;
+    const pz = this.position.z;
+    for (let i = 0; i < sceneObjects.length; i++) {
+      const c = this.cachedAllCenters[i];
+      const dx = c.x - px;
+      const dz = c.z - pz;
+      const r = this.cachedAllRadii[i] + 1.0;
+      if (dx * dx + dz * dz <= r * r) {
+        out.push(sceneObjects[i]);
+      }
+    }
+    return out;
   }
 
   /** Narrows the cached wall list to those near the player, into nearbyWallsTemp. */
@@ -140,23 +206,19 @@ export class PlayerEngine {
     if (walls.length === 0) return walls;
 
     this.nearbyWallsTemp.length = 0;
+    this.nearbyWallBoxesTemp.length = 0;
     for (let i = 0; i < walls.length; i++) {
-      const o = walls[i];
-      o.getWorldPosition(this.tempWorldPos);
-      let radius = 25.0;
-      if (o instanceof THREE.Mesh && o.geometry) {
-        if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
-        if (o.geometry.boundingSphere) {
-          radius = o.geometry.boundingSphere.radius * Math.max(o.scale.x, o.scale.y, o.scale.z);
-        }
-      }
-      const distToCenter = this.tempWorldPos.distanceTo(this.position);
-      if (distToCenter - radius < 30.0) {
-        this.nearbyWallsTemp.push(o);
+      // dist(center) - radius < 30  <=>  distSq < (30 + radius)^2, all precomputed.
+      const reach = 30.0 + this.cachedWallRadii[i];
+      if (this.cachedWallCenters[i].distanceToSquared(this.position) < reach * reach) {
+        this.nearbyWallsTemp.push(walls[i]);
+        this.nearbyWallBoxesTemp.push(this.cachedWallBoxes[i]);
       }
     }
     return this.nearbyWallsTemp;
   }
+
+  private static readonly EMPTY_HITS: THREE.Intersection[] = [];
 
   private static readonly wallCheckDirs = [
     new THREE.Vector3(1, 0, 0),
@@ -278,17 +340,23 @@ export class PlayerEngine {
     this.yaw -= this.mouseDelta.x * this.sensitivity;
     this.pitch -= this.mouseDelta.y * this.sensitivity;
     this.pitch = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, this.pitch));
-    this.mouseDelta = { x: 0, y: 0 };
+    // PERF: reset in place - a fresh object literal was allocated here every frame.
+    this.mouseDelta.x = 0;
+    this.mouseDelta.y = 0;
 
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
 
     // Direction Vectors
-    const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
-    const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
+    // PERF: direct sin/cos into scratch fields - this used to allocate 5 Vector3 per frame
+    // (a yaw rotation needs no applyAxisAngle quaternion math).
+    const sinYaw = Math.sin(this.yaw);
+    const cosYaw = Math.cos(this.yaw);
+    const forward = this.tempForward.set(-sinYaw, 0, -cosYaw);
+    const right = this.tempRight.set(cosYaw, 0, -sinYaw);
 
     // WASD Input Vector
-    const moveDir = new THREE.Vector3();
+    const moveDir = this.tempMoveDir.set(0, 0, 0);
     if (this.moveInput.forward) moveDir.add(forward);
     if (this.moveInput.backward) moveDir.sub(forward);
     if (this.moveInput.right) moveDir.add(right);
@@ -308,7 +376,9 @@ export class PlayerEngine {
         this.downRaycaster.set(this.tempRayOrigin, this.downDir);
         this.downRaycaster.far = 100.0;
         try {
-          const gHits = this.downRaycaster.intersectObjects(sceneObjects, false);
+          // PERF: XZ-filtered candidates instead of the entire static mesh list.
+          const candidates = this.collectVerticalRayCandidates(sceneObjects);
+          const gHits = candidates.length > 0 ? this.downRaycaster.intersectObjects(candidates, false) : PlayerEngine.EMPTY_HITS;
           if (gHits.length > 0) {
             let highestHitY = -999;
             for (let i = 0; i < gHits.length; i++) {
@@ -338,7 +408,7 @@ export class PlayerEngine {
 
     // 4. Grapple Reel Physics
     if (this.isGrappling && this.grappleTargetPoint) {
-      const pullDir = new THREE.Vector3().subVectors(this.grappleTargetPoint, this.position).normalize();
+      const pullDir = this.tempPullDir.subVectors(this.grappleTargetPoint, this.position).normalize();
       this.velocity.addScaledVector(pullDir, 60 * delta);
       if (this.position.distanceTo(this.grappleTargetPoint) < 2.0) {
         this.isGrappling = false;
@@ -354,8 +424,9 @@ export class PlayerEngine {
           this.velocity.x += moveDir.x * 20 * delta;
           this.velocity.z += moveDir.z * 20 * delta;
         }
-        this.velocity.x *= Math.pow(0.97, delta * 60);
-        this.velocity.z *= Math.pow(0.97, delta * 60);
+        const slideFriction = Math.pow(0.97, delta * 60);
+        this.velocity.x *= slideFriction;
+        this.velocity.z *= slideFriction;
       } else {
         // Normal walking/running: instant crisp acceleration & instant ground stopping
         const targetSpeed = this.slowTimer > 0 ? 5.5 : 15;
@@ -383,15 +454,16 @@ export class PlayerEngine {
           this.velocity.z = (this.velocity.z / horizSpeed) * 45;
         }
       }
-      this.velocity.x *= Math.pow(0.985, delta * 60);
-      this.velocity.z *= Math.pow(0.985, delta * 60);
+      const airFriction = Math.pow(0.985, delta * 60);
+      this.velocity.x *= airFriction;
+      this.velocity.z *= airFriction;
 
       // Gravity
       this.velocity.y -= 32 * delta;
     }
 
     // Move Player with Movement Sub-Stepping (prevents tunneling through walls at high speeds)
-    const totalMove = this.velocity.clone().multiplyScalar(delta);
+    const totalMove = this.tempTotalMove.copy(this.velocity).multiplyScalar(delta);
     const moveDist = totalMove.length();
     const maxSubStepDist = 0.25; // max 0.25m per collision check sub-step
     const subSteps = Math.max(1, Math.ceil(moveDist / maxSubStepDist));
@@ -407,7 +479,9 @@ export class PlayerEngine {
       this.upRaycaster.set(this.position, this.upDir);
       this.upRaycaster.far = 2.5;
       try {
-        const upHits = this.upRaycaster.intersectObjects(sceneObjects, false);
+        // PERF: XZ-filtered candidates instead of the entire static mesh list.
+        const upCandidates = this.collectVerticalRayCandidates(sceneObjects);
+        const upHits = upCandidates.length > 0 ? this.upRaycaster.intersectObjects(upCandidates, false) : PlayerEngine.EMPTY_HITS;
         if (upHits.length > 0) {
           const hitDist = upHits[0].distance;
           // Player head height is 1.8m above feet position
@@ -431,7 +505,9 @@ export class PlayerEngine {
       this.downRaycaster.set(this.tempRayOrigin, this.downDir);
       this.downRaycaster.far = 100.0;
       try {
-        const gHits = this.downRaycaster.intersectObjects(sceneObjects, false);
+        // PERF: XZ-filtered candidates instead of the entire static mesh list.
+        const groundCandidates = this.collectVerticalRayCandidates(sceneObjects);
+        const gHits = groundCandidates.length > 0 ? this.downRaycaster.intersectObjects(groundCandidates, false) : PlayerEngine.EMPTY_HITS;
         if (gHits.length > 0) {
           let highestHitY = -999;
           for (let i = 0; i < gHits.length; i++) {
@@ -497,9 +573,10 @@ export class PlayerEngine {
     const playerRadius = 0.75;
 
     // PASS 1: Direct AABB Box Penetration & Ejection Check
+    // PERF: boxes come from the per-level cache (parallel to `targets`); setFromObject
+    // used to walk each wall's subtree here on every invocation.
     for (let i = 0; i < targets.length; i++) {
-      const target = targets[i];
-      this.tempBox.setFromObject(target);
+      this.tempBox.copy(this.nearbyWallBoxesTemp[i]);
 
       // Check vertical overlap (player height range [pos.y - 1.8, pos.y + 0.2])
       const playerMinY = this.position.y - 1.8;
@@ -540,7 +617,11 @@ export class PlayerEngine {
 
     // PASS 2: Multi-Height & Multi-Angle Raycast Probe
     this.wallRaycaster.far = playerRadius + 0.15;
-    const heights = [this.position.y - 1.2, this.position.y - 0.4, this.position.y + 0.4];
+    // PERF: reused scratch array - a fresh array literal was allocated 2-5x per frame.
+    const heights = this.probeHeightsTemp;
+    heights[0] = this.position.y - 1.2;
+    heights[1] = this.position.y - 0.4;
+    heights[2] = this.position.y + 0.4;
     const numAngles = 12;
     const angleStep = (Math.PI * 2) / numAngles;
 
@@ -602,7 +683,9 @@ export class PlayerEngine {
         const intersects = this.wallCheckRaycaster.intersectObjects(targets, false);
         if (intersects && intersects.length > 0 && intersects[0] && intersects[0].distance < 1.5) {
           this.isNearWall = true;
-          this.wallNormal.copy(intersects[0].face?.normal || dir.clone().negate());
+          const face = intersects[0].face;
+          if (face) this.wallNormal.copy(face.normal);
+          else this.wallNormal.copy(dir).negate();
           break;
         }
       } catch {
@@ -622,10 +705,12 @@ export class PlayerEngine {
     AudioEngine.playDash();
 
     // Dash in move direction or forward
-    const forward = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
-    const right = new THREE.Vector3(1, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), this.yaw);
+    const sinYaw = Math.sin(this.yaw);
+    const cosYaw = Math.cos(this.yaw);
+    const forward = this.tempForward.set(-sinYaw, 0, -cosYaw);
+    const right = this.tempRight.set(cosYaw, 0, -sinYaw);
 
-    const dashDir = new THREE.Vector3();
+    const dashDir = this.tempDashDir.set(0, 0, 0);
     if (this.moveInput.forward) dashDir.add(forward);
     if (this.moveInput.backward) dashDir.sub(forward);
     if (this.moveInput.right) dashDir.add(right);

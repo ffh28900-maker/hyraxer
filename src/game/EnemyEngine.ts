@@ -87,6 +87,15 @@ export interface EnemyInstance {
    * traversal cost dwarfed the handful of rotations it was looking for.
    */
   animParts?: EnemyAnimParts;
+  /**
+   * PERF: cached line-of-sight result. A fresh LOS query is a raycast against level
+   * geometry; with many shooters that used to run per enemy, per frame. The cache is
+   * refreshed when it is older than LOS_TTL or the player moved > LOS_MOVE_EPS since the
+   * last sample, subject to a small per-frame raycast budget shared by all enemies.
+   */
+  losResult?: boolean;
+  losTime?: number;
+  losSampledPos?: THREE.Vector3;
 }
 
 /** Animated sub-meshes of an enemy model, looked up once instead of via per-frame traverse. */
@@ -282,40 +291,136 @@ export class EnemyEngine {
       // NOTE: no obj.visible filter - room culling hides distant room geometry, but
       // knockback/ricochet collision must still respect those walls.
       this.cachedObstacles = this.scene.children.filter((obj) => obj.name === 'wall' || obj.name === 'ground');
+      // PERF: world-space AABB per obstacle root, computed once (level geometry is static).
+      // Rays are pre-tested against these boxes so the expensive recursive triangle raycast
+      // only ever runs against the handful of obstacle subtrees the ray can actually touch.
+      this.cachedObstacleBoxes = this.cachedObstacles.map((obj) => new THREE.Box3().setFromObject(obj));
     }
     return this.cachedObstacles;
   }
 
   private losRaycaster = new THREE.Raycaster();
+  private cachedObstacleBoxes: THREE.Box3[] | null = null;
+  private losScratchRay = new THREE.Ray();
+  private losScratchHit = new THREE.Vector3();
+  private losStart = new THREE.Vector3();
+  private losDir = new THREE.Vector3();
+  private rayCandidatesTemp: THREE.Object3D[] = [];
 
-  private hasLineOfSight(fromPos: THREE.Vector3, toPos: THREE.Vector3): boolean {
+  /** Per-frame budget of fresh LOS raycasts, reset in update(). */
+  private losBudgetRemaining = 0;
+  private static readonly EMPTY_HITS: THREE.Intersection[] = [];
+  private projOldPos = new THREE.Vector3();
+  private projDir = new THREE.Vector3();
+  private tempStep = new THREE.Vector3();
+  /** Scratch result for clampPosInRoom - callers consume x/z immediately. */
+  private clampResult = { x: 0, z: 0 };
+
+  /** Running total of killed enemies (replaces per-frame isDead scans). */
+  public deadCount = 0;
+  /** The currently alive boss, maintained at spawn/kill (replaces a per-frame .find()). */
+  public activeBoss: EnemyInstance | null = null;
+  /** Set when a kill happens; the array is compacted at the start of the next update(). */
+  private hasDeadEntries = false;
+  /** Accumulated simulation time, used to age LOS cache entries. */
+  private timeAcc = 0;
+
+  private static readonly LOS_TTL = 0.12; // seconds a cached LOS result stays fresh
+  private static readonly LOS_MOVE_EPS_SQ = 6.25; // (2.5 m)^2 player travel forces refresh
+  private static readonly LOS_BUDGET_PER_FRAME = 6;
+  private static readonly WALL_PROBE_ANGLES = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
+
+  /**
+   * PERF: narrow the obstacle list to subtrees whose AABB the ray actually crosses.
+   * Conservative (a superset of real hits), so raycast semantics are unchanged.
+   */
+  private collectObstaclesAlongRay(origin: THREE.Vector3, dir: THREE.Vector3, far: number): THREE.Object3D[] {
+    const obstacles = this.getObstacles();
+    const boxes = this.cachedObstacleBoxes!;
+    this.rayCandidatesTemp.length = 0;
+    this.losScratchRay.origin.copy(origin);
+    this.losScratchRay.direction.copy(dir);
+    const farSq = far * far;
+    for (let i = 0; i < obstacles.length; i++) {
+      const hit = this.losScratchRay.intersectBox(boxes[i], this.losScratchHit);
+      if (hit && hit.distanceToSquared(origin) <= farSq) {
+        this.rayCandidatesTemp.push(obstacles[i]);
+      }
+    }
+    return this.rayCandidatesTemp;
+  }
+
+  /**
+   * PERF: obstacles whose AABB lies within `range` of a point. Conservative superset of
+   * anything a short ray from that point could hit, so raycast semantics are unchanged.
+   */
+  private collectObstaclesNearPoint(point: THREE.Vector3, range: number): THREE.Object3D[] {
+    const obstacles = this.getObstacles();
+    const boxes = this.cachedObstacleBoxes!;
+    this.nearObstaclesTemp.length = 0;
+    for (let i = 0; i < obstacles.length; i++) {
+      if (boxes[i].distanceToPoint(point) <= range) {
+        this.nearObstaclesTemp.push(obstacles[i]);
+      }
+    }
+    return this.nearObstaclesTemp;
+  }
+
+  private computeLOS(fromPos: THREE.Vector3, toPos: THREE.Vector3): boolean {
     const obstacles = this.getObstacles();
     if (!obstacles || obstacles.length === 0) return true;
 
-    const start = fromPos.clone();
-    const end = toPos.clone();
-    start.y += 1.0;
-    end.y += 1.0;
+    this.losStart.copy(fromPos);
+    this.losStart.y += 1.0;
+    this.losDir.copy(toPos);
+    this.losDir.y += 1.0;
+    this.losDir.sub(this.losStart);
 
-    const dir = new THREE.Vector3().subVectors(end, start);
-    const maxDist = dir.length();
+    const maxDist = this.losDir.length();
     if (maxDist < 0.2) return true;
-    dir.normalize();
+    this.losDir.normalize();
 
-    this.losRaycaster.set(start, dir);
+    const far = Math.max(0.2, maxDist - 0.6);
+    const candidates = this.collectObstaclesAlongRay(this.losStart, this.losDir, far);
+    if (candidates.length === 0) return true;
+
+    this.losRaycaster.set(this.losStart, this.losDir);
     this.losRaycaster.near = 0.2;
-    this.losRaycaster.far = Math.max(0.2, maxDist - 0.6);
+    this.losRaycaster.far = far;
 
     try {
-      const hits = this.losRaycaster.intersectObjects(obstacles, true);
+      const hits = this.losRaycaster.intersectObjects(candidates, true);
       return hits.length === 0;
     } catch {
       return true;
     }
   }
 
+  /**
+   * Cached LOS from an enemy to the player. Stale entries refresh subject to the shared
+   * per-frame raycast budget; between refreshes the last known answer is reused (max error:
+   * ~2.5 m of player travel or 120 ms, well under any enemy telegraph window).
+   */
+  private hasLineOfSight(enemy: EnemyInstance, playerPos: THREE.Vector3): boolean {
+    const stale =
+      enemy.losSampledPos === undefined ||
+      this.timeAcc - (enemy.losTime ?? 0) > EnemyEngine.LOS_TTL ||
+      playerPos.distanceToSquared(enemy.losSampledPos) > EnemyEngine.LOS_MOVE_EPS_SQ;
+
+    if (stale && this.losBudgetRemaining > 0) {
+      this.losBudgetRemaining--;
+      enemy.losResult = this.computeLOS(enemy.position, playerPos);
+      enemy.losTime = this.timeAcc;
+      if (!enemy.losSampledPos) enemy.losSampledPos = new THREE.Vector3();
+      enemy.losSampledPos.copy(playerPos);
+    }
+    // Until first computed, hold fire (false) rather than shoot through walls.
+    return enemy.losResult ?? false;
+  }
+
   public invalidateObstacleCache() {
     this.cachedObstacles = null;
+    this.cachedObstacleBoxes = null;
   }
 
   // Shared optimized Fountain geometries & materials
@@ -503,6 +608,7 @@ export class EnemyEngine {
     };
 
     this.enemies.push(enemy);
+    if (isBoss && !this.activeBoss) this.activeBoss = enemy;
     return enemy;
   }
 
@@ -534,6 +640,9 @@ export class EnemyEngine {
       if (enemy.roomId === roomId) {
         this.scene.remove(enemy.mesh);
         this.enemies.splice(i, 1);
+        if (this.activeBoss === enemy) {
+          this.activeBoss = this.enemies.find((e) => e.isBoss && !e.isDead) ?? null;
+        }
       }
     }
   }
@@ -559,6 +668,27 @@ export class EnemyEngine {
     // PERF: refresh the id->room index once per update rather than running rooms.find()
     // per enemy, per frame.
     this.refreshRoomIndex(rooms);
+
+    // PERF: compact dead enemies out of the array (killEnemy only marks; removing here keeps
+    // splice-during-iteration bugs impossible and makes every later loop O(alive)).
+    if (this.hasDeadEntries) {
+      let w = 0;
+      for (let i = 0; i < this.enemies.length; i++) {
+        if (!this.enemies[i].isDead) this.enemies[w++] = this.enemies[i];
+      }
+      this.enemies.length = w;
+      this.hasDeadEntries = false;
+    }
+
+    // PERF: age the LOS cache and grant this frame's shared raycast budget.
+    this.timeAcc += delta;
+    this.losBudgetRemaining = EnemyEngine.LOS_BUDGET_PER_FRAME;
+
+    // PERF: shared per-frame values, hoisted out of the per-enemy loop. Date.now() alone
+    // used to be called 5-10x per enemy per frame for animation phases.
+    const nowMs = Date.now();
+    const airDragFactor = Math.pow(0.86, delta);
+    const floorFrictionFactor = Math.pow(0.01, delta);
 
     // 1. Update Enemies Physics, Ricochet & Stun Recovery
     for (const enemy of this.enemies) {
@@ -595,16 +725,17 @@ export class EnemyEngine {
       const minGroundY = roomFloorY + 0.8;
 
       if (enemy.knockbackVel && enemy.knockbackVel.lengthSq() > 0.05) {
-        const speed = enemy.knockbackVel.length();
+        const speedSq = enemy.knockbackVel.lengthSq();
 
         // Downward gravity during flight (strengthened for faster, heavier falling)
         enemy.knockbackVel.y -= 55.0 * delta;
 
         // Air drag
-        enemy.knockbackVel.x *= Math.pow(0.86, delta);
-        enemy.knockbackVel.z *= Math.pow(0.86, delta);
+        enemy.knockbackVel.x *= airDragFactor;
+        enemy.knockbackVel.z *= airDragFactor;
 
-        const step = enemy.knockbackVel.clone().multiplyScalar(delta);
+        // PERF: scratch vector - this used to allocate a Vector3 per knocked-back enemy per frame.
+        const step = this.tempStep.copy(enemy.knockbackVel).multiplyScalar(delta);
         const stepLength = step.length();
 
         // Gentler tumbling rotation for airborne/knocked-back mobs
@@ -614,22 +745,17 @@ export class EnemyEngine {
         let bounced = false;
 
         // Continuous sweep raycast against level obstacles before stepping through thin walls
-        if (speed > 0.5 && stepLength > 0.001) {
+        if (speedSq > 0.25 && stepLength > 0.001) {
           this.tempDir.copy(enemy.knockbackVel).normalize();
           this.knockbackRaycaster.set(enemy.position, this.tempDir);
           this.knockbackRaycaster.near = 0;
           this.knockbackRaycaster.far = stepLength + 0.8;
-          const obstacles = this.getObstacles();
-          this.nearObstaclesTemp.length = 0;
-          for (let obIdx = 0; obIdx < obstacles.length; obIdx++) {
-            if (obstacles[obIdx].position.distanceToSquared(enemy.position) < 900) {
-              this.nearObstaclesTemp.push(obstacles[obIdx]);
-            }
-          }
-          const targets = this.nearObstaclesTemp.length > 0 ? this.nearObstaclesTemp : obstacles;
+          // PERF: AABB-narrowed candidate set instead of a distance heuristic over the
+          // whole obstacle list (strictly more accurate for group roots parked at origin).
+          const targets = this.collectObstaclesAlongRay(enemy.position, this.tempDir, stepLength + 0.8);
 
           try {
-            const hits = this.knockbackRaycaster.intersectObjects(targets, true);
+            const hits = targets.length > 0 ? this.knockbackRaycaster.intersectObjects(targets, true) : EnemyEngine.EMPTY_HITS;
             if (hits.length > 0 && hits[0].face) {
               const hit = hits[0];
               this.tempNormal.copy(hit.face.normal);
@@ -689,8 +815,8 @@ export class EnemyEngine {
             bounced = true;
           } else {
             enemy.knockbackVel.y = 0;
-            enemy.knockbackVel.x *= Math.pow(0.01, delta); // Heavy floor friction
-            enemy.knockbackVel.z *= Math.pow(0.01, delta);
+            enemy.knockbackVel.x *= floorFrictionFactor; // Heavy floor friction
+            enemy.knockbackVel.z *= floorFrictionFactor;
           }
         } else if (enemy.position.y > roomFloorY + 14.0 && enemy.knockbackVel.y > 0) {
           enemy.position.y = roomFloorY + 14.0;
@@ -774,14 +900,14 @@ export class EnemyEngine {
             pParts.minigunBarrels[mi].rotation.z += 8.0 * delta;
           }
           if (pParts.mouthJaw) {
-            const idleCycle = Math.sin(Date.now() * 0.003) * 0.15 + 0.15;
+            const idleCycle = Math.sin(nowMs * 0.003) * 0.15 + 0.15;
             pParts.mouthJaw.rotation.x = THREE.MathUtils.lerp(pParts.mouthJaw.rotation.x, idleCycle * 0.5, 0.1);
             pParts.mouthJaw.position.y = THREE.MathUtils.lerp(pParts.mouthJaw.position.y, -0.25 - idleCycle * 0.2, 0.1);
           }
         }
 
         if (enemy.type === 'drone' || enemy.type === 'winged_doman') {
-          enemy.position.y = 2.8 + Math.sin(Date.now() * 0.003) * 0.25;
+          enemy.position.y = 2.8 + Math.sin(nowMs * 0.003) * 0.25;
         }
 
         continue; // Standing still on pedestals without attacking
@@ -838,7 +964,7 @@ export class EnemyEngine {
         // Imp Doman: Fast agile chase
         if (distToPlayer > 1.8) {
           this.tempDir.subVectors(playerPos, enemy.position).normalize();
-          this.tempDir.x += Math.sin(Date.now() * 0.005) * 0.5;
+          this.tempDir.x += Math.sin(nowMs * 0.005) * 0.5;
           enemy.position.addScaledVector(this.tempDir.normalize(), 8.0 * delta);
         } else if (enemy.attackCooldown <= 0) {
           enemy.attackCooldown = 1.2;
@@ -850,8 +976,8 @@ export class EnemyEngine {
           const isAttacking = (enemy.dashStage && enemy.dashStage > 0) || distToPlayer <= 2.2;
           if (isAttacking) {
             // Rapid robotic claw wave / slash animation!
-            enemy.animParts.roboArm.rotation.x = Math.sin(Date.now() * 0.035) * 1.1 - 0.2;
-            enemy.animParts.roboArm.rotation.z = Math.cos(Date.now() * 0.035) * 0.35;
+            enemy.animParts.roboArm.rotation.x = Math.sin(nowMs * 0.035) * 1.1 - 0.2;
+            enemy.animParts.roboArm.rotation.z = Math.cos(nowMs * 0.035) * 0.35;
           } else {
             enemy.animParts.roboArm.rotation.x = THREE.MathUtils.lerp(enemy.animParts.roboArm.rotation.x, 0, 0.15);
             enemy.animParts.roboArm.rotation.z = THREE.MathUtils.lerp(enemy.animParts.roboArm.rotation.z, 0, 0.15);
@@ -1008,7 +1134,7 @@ export class EnemyEngine {
           }
         } else {
           // --- SNIPER SHOOTING & AIM TELEGRAPH ---
-          if (distToPlayer < 45 && this.hasLineOfSight(enemy.position, playerPos)) {
+          if (distToPlayer < 45 && this.hasLineOfSight(enemy, playerPos)) {
             enemy.telegraphTimer += delta;
             if (enemy.telegraphTimer >= 1.3 && enemy.attackCooldown <= 0) {
               enemy.telegraphTimer = 0;
@@ -1054,7 +1180,7 @@ export class EnemyEngine {
           }
         } else {
           // --- NORMAL MODE: CONSTANTLY FLY/BACK AWAY FROM PLAYER & SHOOT ---
-          enemy.position.y = THREE.MathUtils.lerp(enemy.position.y, roomFloorY + 4.0 + Math.sin(Date.now() * 0.004) * 0.6, 0.08);
+          enemy.position.y = THREE.MathUtils.lerp(enemy.position.y, roomFloorY + 4.0 + Math.sin(nowMs * 0.004) * 0.6, 0.08);
 
           // Fly away from player to maintain distance
           if (distToPlayer < 22.0) {
@@ -1081,7 +1207,7 @@ export class EnemyEngine {
             enemy.position.addScaledVector(this.tempDir, 7.5 * delta);
           }
 
-          if (enemy.attackCooldown <= 0 && this.hasLineOfSight(enemy.position, playerPos)) {
+          if (enemy.attackCooldown <= 0 && this.hasLineOfSight(enemy, playerPos)) {
             enemy.attackCooldown = enemy.type === 'drone' ? 2.2 : 1.8;
             if (enemy.type === 'drone') {
               this.spawnEnemyRocket(enemy.position, playerPos, 12, 10);
@@ -1099,7 +1225,7 @@ export class EnemyEngine {
           enemy.position.addScaledVector(this.tempDir, 5.2 * delta);
         }
 
-        if (distToPlayer < 36.0 && this.hasLineOfSight(enemy.position, playerPos)) {
+        if (distToPlayer < 36.0 && this.hasLineOfSight(enemy, playerPos)) {
           if (enemy.attackCooldown <= 0) {
             enemy.attackCooldown = 1.6;
             const muzzlePos = enemy.position.clone().add(new THREE.Vector3(0, 0.9, 0));
@@ -1142,7 +1268,7 @@ export class EnemyEngine {
         }
 
         // 2. Shoot slowing web projectile
-        if (distToPlayer < 36.0 && this.hasLineOfSight(enemy.position, playerPos)) {
+        if (distToPlayer < 36.0 && this.hasLineOfSight(enemy, playerPos)) {
           if (enemy.attackCooldown <= 0) {
             enemy.attackCooldown = 1.8;
             const muzzlePos = enemy.position.clone().add(new THREE.Vector3(0, 0.7, 0.6));
@@ -1155,23 +1281,10 @@ export class EnemyEngine {
         if (!enemy.centipedeState) enemy.centipedeState = 'charge';
 
         const activeRoom = this.getRoomById(enemy.roomId, rooms);
-        const wallMargin = 1.6;
 
-        // Room clamp helper to keep centipede strictly inside level geometry
-        const clampPosInRoom = (x: number, z: number): { x: number; z: number } => {
-          if (!activeRoom) return { x, z };
-          const minX = activeRoom.xCenter - activeRoom.width / 2 + wallMargin;
-          const maxX = activeRoom.xCenter + activeRoom.width / 2 - wallMargin;
-          const minZ = activeRoom.zCenter - activeRoom.depth / 2 + wallMargin;
-          const maxZ = activeRoom.zCenter + activeRoom.depth / 2 - wallMargin;
-          return {
-            x: THREE.MathUtils.clamp(x, minX, maxX),
-            z: THREE.MathUtils.clamp(z, minZ, maxZ),
-          };
-        };
 
         // Rapid leg wiggling animation for organic centipede crawling
-        const crawlCycle = Math.sin(Date.now() * 0.025) * 0.45;
+        const crawlCycle = Math.sin(nowMs * 0.025) * 0.45;
         if (enemy.animParts && !enemy.animParts.isEmpty) {
           for (const leg of enemy.animParts.legsForward) leg.rotation.z = crawlCycle;
           for (const leg of enemy.animParts.legsBackward) leg.rotation.z = -crawlCycle;
@@ -1197,12 +1310,12 @@ export class EnemyEngine {
             // Slithering movement: add slight side-to-side sine oscillation to path
             const perpX = -this.tempDir.z;
             const perpZ = this.tempDir.x;
-            const slitherSine = Math.sin(Date.now() * 0.015 + (enemy.position.x + enemy.position.z) * 0.5) * 0.25;
+            const slitherSine = Math.sin(nowMs * 0.015 + (enemy.position.x + enemy.position.z) * 0.5) * 0.25;
 
             const moveVecX = (this.tempDir.x + perpX * slitherSine) * 11.5 * delta;
             const moveVecZ = (this.tempDir.z + perpZ * slitherSine) * 11.5 * delta;
 
-            const clamped = clampPosInRoom(enemy.position.x + moveVecX, enemy.position.z + moveVecZ);
+            const clamped = this.clampPosInRoom(activeRoom, enemy.position.x + moveVecX, enemy.position.z + moveVecZ);
             enemy.position.x = clamped.x;
             enemy.position.z = clamped.z;
           } else {
@@ -1226,7 +1339,7 @@ export class EnemyEngine {
               const moveVecX = perpX * 7.5 * delta;
               const moveVecZ = perpZ * 7.5 * delta;
 
-              const clamped = clampPosInRoom(enemy.position.x + moveVecX, enemy.position.z + moveVecZ);
+              const clamped = this.clampPosInRoom(activeRoom, enemy.position.x + moveVecX, enemy.position.z + moveVecZ);
               enemy.position.x = clamped.x;
               enemy.position.z = clamped.z;
             }
@@ -1236,7 +1349,7 @@ export class EnemyEngine {
           const moveX = enemy.dashDir!.x * 25.0 * delta;
           const moveZ = enemy.dashDir!.z * 25.0 * delta;
 
-          const clamped = clampPosInRoom(enemy.position.x + moveX, enemy.position.z + moveZ);
+          const clamped = this.clampPosInRoom(activeRoom, enemy.position.x + moveX, enemy.position.z + moveZ);
           enemy.position.x = clamped.x;
           enemy.position.z = clamped.z;
 
@@ -1278,12 +1391,12 @@ export class EnemyEngine {
           // Add slight diagonal slither to retreat so it doesn't get stuck linearly against walls
           const perpX = -this.tempDir.z;
           const perpZ = this.tempDir.x;
-          const slither = Math.sin(Date.now() * 0.01) * 0.25;
+          const slither = Math.sin(nowMs * 0.01) * 0.25;
 
           const moveX = (this.tempDir.x + perpX * slither) * 8.5 * delta;
           const moveZ = (this.tempDir.z + perpZ * slither) * 8.5 * delta;
 
-          const clamped = clampPosInRoom(enemy.position.x + moveX, enemy.position.z + moveZ);
+          const clamped = this.clampPosInRoom(activeRoom, enemy.position.x + moveX, enemy.position.z + moveZ);
           enemy.position.x = clamped.x;
           enemy.position.z = clamped.z;
 
@@ -1304,7 +1417,7 @@ export class EnemyEngine {
           if (enemy.jumpTimer === undefined) enemy.jumpTimer = 0;
           if (enemy.minigunBurstTimer === undefined) enemy.minigunBurstTimer = 0;
 
-          const hasLOS = this.hasLineOfSight(enemy.position, playerPos);
+          const hasLOS = this.hasLineOfSight(enemy, playerPos);
 
           // 1. PROPELLER FAN WIND PUSHBACK ("дует на тебя пропеллером, отталкивая")
           const windRange = 38.0;
@@ -1465,7 +1578,7 @@ export class EnemyEngine {
               enemy.wormTelegraphMesh.position.set(enemy.wormTargetPos.x, baseY + 0.05, enemy.wormTargetPos.z);
               const progress = 1.0 - (enemy.wormTimer || 0) / 1.4;
               // Pulse and grow warning ring scale from 0.3 to 4.5
-              const ringScale = (0.3 + progress * 4.2) * (1.0 + Math.sin(Date.now() * 0.02) * 0.15);
+              const ringScale = (0.3 + progress * 4.2) * (1.0 + Math.sin(nowMs * 0.02) * 0.15);
               enemy.wormTelegraphMesh.scale.setScalar(ringScale);
             }
 
@@ -1567,11 +1680,11 @@ export class EnemyEngine {
             enemy.wormDashTelegraphMesh.rotation.z = Math.atan2(this.tempDir.x, this.tempDir.z);
 
             // Pulsate width / opacity
-            const pulse = 0.5 + Math.sin(Date.now() * 0.02) * 0.3;
+            const pulse = 0.5 + Math.sin(nowMs * 0.02) * 0.3;
             enemy.wormDashTelegraphMesh.scale.set(pulse, 1.0, 1.0);
 
             // Vibrate / windup animation
-            enemy.mesh.position.y = baseY + Math.sin(Date.now() * 0.05) * 0.15;
+            enemy.mesh.position.y = baseY + Math.sin(nowMs * 0.05) * 0.15;
 
             if ((enemy.wormTimer || 0) <= 0) {
               enemy.wormState = 'dashing';
@@ -1658,7 +1771,7 @@ export class EnemyEngine {
               // Serpent slither oscillation
               const perpX = -this.tempDir.z;
               const perpZ = this.tempDir.x;
-              const slither = Math.sin(Date.now() * 0.008 + enemy.position.x * 0.2) * 0.2;
+              const slither = Math.sin(nowMs * 0.008 + enemy.position.x * 0.2) * 0.2;
 
               const moveX = (this.tempDir.x + perpX * slither) * 4.5 * delta;
               const moveZ = (this.tempDir.z + perpZ * slither) * 4.5 * delta;
@@ -1686,7 +1799,7 @@ export class EnemyEngine {
             }
 
             // Trigger Special Attack when cooldown is ready
-            if (enemy.attackCooldown <= 0 && this.hasLineOfSight(enemy.position, playerPos)) {
+            if (enemy.attackCooldown <= 0 && this.hasLineOfSight(enemy, playerPos)) {
               if (enemy.wormAttackType === 'burrow') {
                 enemy.wormState = 'burrow_down';
                 enemy.wormTimer = 0.7; // 0.7s diving animation
@@ -1707,8 +1820,8 @@ export class EnemyEngine {
         }
 
         // Quadrupedal leg walk gait animation & sub-component animations
-        const walkCycle = Math.sin(Date.now() * 0.012);
-        const legSwing = isWalking ? walkCycle * 0.45 : Math.sin(Date.now() * 0.002) * 0.06;
+        const walkCycle = Math.sin(nowMs * 0.012);
+        const legSwing = isWalking ? walkCycle * 0.45 : Math.sin(nowMs * 0.002) * 0.06;
 
         // PERF: direct references resolved at spawn - no per-frame traverse of the
         // boss model's hundreds of child meshes.
@@ -1730,7 +1843,7 @@ export class EnemyEngine {
           }
           if (parts.mouthJaw) {
             const isAttacking = enemy.attackCooldown < 1.6;
-            const idleCycle = Math.sin(Date.now() * 0.003) * 0.12 + 0.1;
+            const idleCycle = Math.sin(nowMs * 0.003) * 0.12 + 0.1;
             const mouthOpenFactor = isAttacking ? 0.75 : idleCycle;
             // Smoothly rotate lower jaw open and translate down
             parts.mouthJaw.rotation.x = THREE.MathUtils.lerp(parts.mouthJaw.rotation.x, mouthOpenFactor * 0.65, 0.12);
@@ -1744,7 +1857,7 @@ export class EnemyEngine {
         }
 
         // Boss Special Attack Loop
-        if (enemy.attackCooldown <= 0 && this.hasLineOfSight(enemy.position, playerPos)) {
+        if (enemy.attackCooldown <= 0 && this.hasLineOfSight(enemy, playerPos)) {
           enemy.attackCooldown = 2.5;
 
           if (enemy.type === 'boss_goliath') {
@@ -1771,13 +1884,15 @@ export class EnemyEngine {
     }
 
     // 1b. Pairwise Enemy-Enemy Separation (Prevents mobs from stacking/sticking inside each other)
+    // PERF: room-frozen enemies never move (their AI `continue`s before any movement code),
+    // so separating them is wasted O(N^2) work - restrict pairs to active enemies.
     for (let i = 0; i < this.enemies.length; i++) {
       const e1 = this.enemies[i];
-      if (e1.isDead) continue;
+      if (e1.isDead || e1.isRoomFrozen) continue;
 
       for (let j = i + 1; j < this.enemies.length; j++) {
         const e2 = this.enemies[j];
-        if (e2.isDead) continue;
+        if (e2.isDead || e2.isRoomFrozen) continue;
 
         const minRadius = (e1.isBoss ? 2.5 : 1.1) + (e2.isBoss ? 2.5 : 1.1);
         const dx = e2.position.x - e1.position.x;
@@ -1802,12 +1917,12 @@ export class EnemyEngine {
     const obstacles = this.getObstacles();
     for (let p = this.projectiles.length - 1; p >= 0; p--) {
       const proj = this.projectiles[p];
-      const oldPos = proj.mesh.position.clone();
+      this.projOldPos.copy(proj.mesh.position);
       proj.mesh.position.addScaledVector(proj.velocity, delta);
       proj.life -= delta;
 
       if (proj.isEnemy) {
-        if (proj.mesh.position.distanceTo(playerPos) < 1.5) {
+        if (proj.mesh.position.distanceToSquared(playerPos) < 2.25) {
           onPlayerDamage(proj.damage);
           if (proj.isToxic) {
             this.spawnToxicPool(proj.mesh.position.clone(), 3.5, 1.4);
@@ -1820,14 +1935,20 @@ export class EnemyEngine {
           continue;
         }
 
-        // Raycast check projectile collision against solid level walls and obstacles
+        // Raycast check projectile collision against solid level walls and obstacles.
+        // PERF: candidates narrowed to obstacle subtrees whose AABB the step-ray crosses -
+        // this used to raycast the entire level per projectile per frame.
         if (obstacles && obstacles.length > 0) {
           const stepDist = proj.velocity.length() * delta + 0.2;
-          const projDir = proj.velocity.clone().normalize();
-          this.losRaycaster.set(oldPos, projDir);
-          this.losRaycaster.near = 0;
-          this.losRaycaster.far = stepDist;
-          const wallHits = this.losRaycaster.intersectObjects(obstacles, true);
+          this.projDir.copy(proj.velocity).normalize();
+          const candidates = this.collectObstaclesAlongRay(this.projOldPos, this.projDir, stepDist);
+          let wallHits: THREE.Intersection[] = EnemyEngine.EMPTY_HITS;
+          if (candidates.length > 0) {
+            this.losRaycaster.set(this.projOldPos, this.projDir);
+            this.losRaycaster.near = 0;
+            this.losRaycaster.far = stepDist;
+            wallHits = this.losRaycaster.intersectObjects(candidates, true);
+          }
           if (wallHits.length > 0) {
             if (hitSplashes) {
               hitSplashes.spawn(wallHits[0].point, false);
@@ -1914,6 +2035,24 @@ export class EnemyEngine {
     }
   }
 
+  /**
+   * Clamp a position inside a room's walkable bounds (1.6 m wall margin).
+   * PERF: writes into a shared scratch object - callers must consume x/z immediately.
+   * Replaces a closure + object literal that were allocated per centipede per frame.
+   */
+  private clampPosInRoom(room: RoomInfo | undefined, x: number, z: number): { x: number; z: number } {
+    const out = this.clampResult;
+    if (!room) {
+      out.x = x;
+      out.z = z;
+      return out;
+    }
+    const wallMargin = 1.6;
+    out.x = THREE.MathUtils.clamp(x, room.xCenter - room.width / 2 + wallMargin, room.xCenter + room.width / 2 - wallMargin);
+    out.z = THREE.MathUtils.clamp(z, room.zCenter - room.depth / 2 + wallMargin, room.zCenter + room.depth / 2 - wallMargin);
+    return out;
+  }
+
   private resolveEnemyObstacleCollisions(
     enemy: EnemyInstance,
     obstacles: THREE.Object3D[],
@@ -1937,7 +2076,9 @@ export class EnemyEngine {
       this.downRaycaster.set(this.rayOriginTemp, this.tempDir);
       this.downRaycaster.far = 12.0;
       try {
-        const floorHits = this.downRaycaster.intersectObjects(obstacles, false);
+        // PERF: AABB pre-filter - the down probe used to test the entire obstacle list.
+        const floorTargets = this.collectObstaclesAlongRay(this.rayOriginTemp, this.tempDir, 12.0);
+        const floorHits = floorTargets.length > 0 ? this.downRaycaster.intersectObjects(floorTargets, false) : EnemyEngine.EMPTY_HITS;
         if (floorHits.length > 0) {
           const targetY = Math.max(minGroundY, floorHits[0].point.y + 0.8);
           if (!enemy.knockbackVel || enemy.knockbackVel.lengthSq() < 1.0) {
@@ -1960,20 +2101,16 @@ export class EnemyEngine {
 
     // 1. Raycast collision against level walls and obstacles
     if (obstacles.length > 0) {
-      this.nearObstaclesTemp.length = 0;
-      for (let i = 0; i < obstacles.length; i++) {
-        if (obstacles[i].position.distanceToSquared(enemy.position) < 900) {
-          this.nearObstaclesTemp.push(obstacles[i]);
-        }
-      }
-      const targets = this.nearObstaclesTemp.length > 0 ? this.nearObstaclesTemp : obstacles;
-
-      const angles = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
       this.rayOriginTemp.copy(enemy.position);
       this.rayOriginTemp.y += 0.8; // Waist height
       this.knockbackRaycaster.far = radius + 0.2;
 
-      for (const angle of angles) {
+      // PERF: only obstacles whose AABB is within ray reach; skip the pass when none are.
+      // (Also exact for any future mesh whose origin sits far from its geometry.)
+      const targets = this.collectObstaclesNearPoint(this.rayOriginTemp, radius + 0.25);
+
+      for (let a = 0; targets.length > 0 && a < EnemyEngine.WALL_PROBE_ANGLES.length; a++) {
+        const angle = EnemyEngine.WALL_PROBE_ANGLES[a];
         this.tempDir.set(Math.cos(angle), 0, Math.sin(angle));
         this.knockbackRaycaster.set(this.rayOriginTemp, this.tempDir);
         try {
@@ -2002,9 +2139,9 @@ export class EnemyEngine {
     }
 
     // 2. Prevent overlapping / walking inside the player
-    const distToPlayer = enemy.position.distanceTo(playerPos);
+    const distToPlayerSq = enemy.position.distanceToSquared(playerPos);
     const minPlayerDist = radius + 0.75;
-    if (distToPlayer < minPlayerDist && distToPlayer > 0.001) {
+    if (distToPlayerSq < minPlayerDist * minPlayerDist && distToPlayerSq > 0.000001) {
       this.tempVec.subVectors(enemy.position, playerPos);
       this.tempVec.y = 0;
       if (this.tempVec.lengthSq() > 0.001) {
@@ -2234,6 +2371,14 @@ export class EnemyEngine {
   public killEnemy(enemy: EnemyInstance, isSuicide: boolean = false, onStylePoints?: (pts: number, name: string) => void) {
     if (enemy.isDead) return;
     enemy.isDead = true;
+    // PERF: dead enemies used to stay in this.enemies forever, so every per-frame loop
+    // (AI, separation, visibility, HUD counts) stayed O(total ever spawned). The counter
+    // replaces the per-frame dead scans and the array is compacted on the next update().
+    this.deadCount++;
+    this.hasDeadEntries = true;
+    if (this.activeBoss === enemy) {
+      this.activeBoss = this.enemies.find((e) => e.isBoss && !e.isDead && e !== enemy) ?? null;
+    }
     this.scene.remove(enemy.mesh);
 
     if (enemy.wormTelegraphMesh) {
@@ -2402,6 +2547,8 @@ export class EnemyEngine {
       this.scene.remove(enemy.mesh);
     }
     this.enemies = [];
+    this.activeBoss = null;
+    this.hasDeadEntries = false;
 
     for (const proj of this.projectiles) {
       this.scene.remove(proj.mesh);
