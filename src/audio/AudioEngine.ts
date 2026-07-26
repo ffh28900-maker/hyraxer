@@ -84,6 +84,27 @@ class AudioEngineClass {
     osc.stop(now + 0.15);
   }
 
+  public playIceShatter() {
+    if (!this.ctx || this.soundVol <= 0) return;
+    const now = this.ctx.currentTime;
+
+    // High crystalline glass/ice chime frequency sweep
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(2800, now);
+    osc.frequency.exponentialRampToValueAtTime(800, now + 0.18);
+    gain.gain.setValueAtTime(0.4 * this.soundVol, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.18);
+
+    // Crunch noise blast
+    this.playNoiseBlast(0.12, 0.3);
+  }
+
   public playCoinRicochet() {
     if (!this.ctx || this.soundVol <= 0) return;
     const now = this.ctx.currentTime;
@@ -95,7 +116,7 @@ class AudioEngineClass {
     osc.frequency.setValueAtTime(3200, now);
     osc.frequency.exponentialRampToValueAtTime(1800, now + 0.2);
 
-    gain.gain.setValueAtTime(0.5 * this.soundVol, now);
+    gain.gain.setValueAtTime(0.2 * this.soundVol, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
 
     osc.connect(gain);
@@ -103,6 +124,27 @@ class AudioEngineClass {
 
     osc.start(now);
     osc.stop(now + 0.2);
+  }
+
+  public playRicochetImpact() {
+    if (!this.ctx || this.soundVol <= 0) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(50, now + 0.06);
+
+    gain.gain.setValueAtTime(0.035 * this.soundVol, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.06);
   }
 
   public playShotgun() {
@@ -127,25 +169,42 @@ class AudioEngineClass {
     this.playNoiseBlast(0.25, 0.8);
   }
 
-  public playFlashbang() {
+  public playFlashbang(isBlinded: boolean = false) {
     if (!this.ctx || this.soundVol <= 0) return;
     const now = this.ctx.currentTime;
 
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
+    // Sub-bass explosive blast
+    const sub = this.ctx.createOscillator();
+    const subGain = this.ctx.createGain();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(240, now);
+    sub.frequency.exponentialRampToValueAtTime(25, now + 0.45);
+    subGain.gain.setValueAtTime(0.95 * this.soundVol, now);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    sub.connect(subGain);
+    subGain.connect(this.ctx.destination);
+    sub.start(now);
+    sub.stop(now + 0.45);
 
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(4500, now);
-    osc.frequency.linearRampToValueAtTime(3000, now + 0.8);
+    // Sharp noise burst
+    this.playNoiseBlast(0.22, 0.75);
 
-    gain.gain.setValueAtTime(0.4 * this.soundVol, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8);
+    // High-frequency tinnitus ringing if player is blinded
+    if (isBlinded) {
+      const ring = this.ctx.createOscillator();
+      const ringGain = this.ctx.createGain();
+      ring.type = 'sine';
+      ring.frequency.setValueAtTime(4200, now);
+      ring.frequency.exponentialRampToValueAtTime(3600, now + 2.8);
 
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
+      ringGain.gain.setValueAtTime(0.35 * this.soundVol, now);
+      ringGain.gain.exponentialRampToValueAtTime(0.001, now + 2.8);
 
-    osc.start(now);
-    osc.stop(now + 0.8);
+      ring.connect(ringGain);
+      ringGain.connect(this.ctx.destination);
+      ring.start(now);
+      ring.stop(now + 2.8);
+    }
   }
 
   public playRifleShot(isBerserk: boolean = false) {
@@ -214,7 +273,7 @@ class AudioEngineClass {
     osc.frequency.setValueAtTime(startFreq, now);
     osc.frequency.exponentialRampToValueAtTime(endFreq, now + duration);
 
-    gain.gain.setValueAtTime((0.6 + chargeRatio * 0.4) * this.soundVol, now);
+    gain.gain.setValueAtTime((0.18 + chargeRatio * 0.1) * this.soundVol, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
     osc.connect(gain);
@@ -223,7 +282,7 @@ class AudioEngineClass {
     osc.start(now);
     osc.stop(now + duration);
 
-    this.playNoiseBlast(0.2 + chargeRatio * 0.2, 0.4 + chargeRatio * 0.5);
+    this.playNoiseBlast(0.1 + chargeRatio * 0.08, 0.12 + chargeRatio * 0.1);
   }
 
   public playGroundPoundSlam() {
@@ -268,6 +327,27 @@ class AudioEngineClass {
     osc.stop(now + 0.18);
   }
 
+  public playGrappleRetract() {
+    if (!this.ctx || this.soundVol <= 0) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(400, now);
+    osc.frequency.exponentialRampToValueAtTime(1200, now + 0.16);
+
+    gain.gain.setValueAtTime(0.35 * this.soundVol, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.16);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start(now);
+    osc.stop(now + 0.16);
+  }
+
   public playHealNanoFluid() {
     if (!this.ctx || this.soundVol <= 0) return;
     const now = this.ctx.currentTime;
@@ -287,6 +367,28 @@ class AudioEngineClass {
 
     osc.start(now);
     osc.stop(now + 0.2);
+  }
+
+  public playRocketLaunch() {
+    if (!this.ctx || this.soundVol <= 0) return;
+    const now = this.ctx.currentTime;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(320, now + 0.15);
+    osc.frequency.exponentialRampToValueAtTime(80, now + 0.35);
+
+    gain.gain.setValueAtTime(0.6 * this.soundVol, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.35);
+
+    this.playNoiseBlast(0.25, 0.4);
   }
 
   public playExplosion() {
@@ -310,31 +412,44 @@ class AudioEngineClass {
     this.playNoiseBlast(0.4, 0.7);
   }
 
+  private cachedNoiseBuffer: AudioBuffer | null = null;
+
+  private getNoiseBuffer(): AudioBuffer | null {
+    if (!this.ctx) return null;
+    if (!this.cachedNoiseBuffer) {
+      const bufferSize = Math.floor(this.ctx.sampleRate * 1.0); // 1 second buffer
+      this.cachedNoiseBuffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = this.cachedNoiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+    }
+    return this.cachedNoiseBuffer;
+  }
+
   private playNoiseBlast(duration: number, volume: number) {
     if (!this.ctx) return;
-    const bufferSize = this.ctx.sampleRate * duration;
-    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let i = 0; i < bufferSize; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
+    const buffer = this.getNoiseBuffer();
+    if (!buffer) return;
 
+    const now = this.ctx.currentTime;
     const noise = this.ctx.createBufferSource();
     noise.buffer = buffer;
 
     const filter = this.ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(1000, this.ctx.currentTime);
+    filter.frequency.setValueAtTime(1000, now);
 
     const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(volume * this.soundVol, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+    gain.gain.setValueAtTime(volume * this.soundVol, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + duration);
 
     noise.connect(filter);
     filter.connect(gain);
     gain.connect(this.ctx.destination);
 
-    noise.start(this.ctx.currentTime);
+    noise.start(now);
+    noise.stop(now + duration);
   }
 
   // --- DUBSTEP / CYBERPUNK MUSIC ENGINE ---

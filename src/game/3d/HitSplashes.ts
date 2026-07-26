@@ -22,186 +22,211 @@ interface ImpactFlash {
   maxScale: number;
 }
 
+interface ImpactLight {
+  light: THREE.PointLight;
+  life: number;
+  maxLife: number;
+  initialIntensity: number;
+}
+
 export class HitSplashes {
   private scene: THREE.Scene;
   private particles: WhiteParticle[] = [];
   private rings: ImpactRing[] = [];
   private flashes: ImpactFlash[] = [];
+  private lights: ImpactLight[] = [];
 
+  // Geometries
   private sparkGeo: THREE.BoxGeometry;
-  private sparkMat: THREE.MeshBasicMaterial;
   private ringGeo: THREE.TorusGeometry;
-  private ringMat: THREE.MeshBasicMaterial;
+  private ringGeo2: THREE.TorusGeometry;
   private flashGeo: THREE.SphereGeometry;
-  private flashMat: THREE.MeshBasicMaterial;
+  private starGeo: THREE.PlaneGeometry;
+
+  // Shared Materials for high performance & minimal GC
+  private whiteFlashMat: THREE.MeshBasicMaterial;
+  private critStarMat: THREE.MeshBasicMaterial;
+  private stdStarMat: THREE.MeshBasicMaterial;
+  private ringMatPrimary: THREE.MeshBasicMaterial;
+  private ringMatSecondary: THREE.MeshBasicMaterial;
+  private whiteSparkMat: THREE.MeshBasicMaterial;
+  private cyanSparkMat: THREE.MeshBasicMaterial;
+  private goldSparkMat: THREE.MeshBasicMaterial;
+
+  private particlePool: { mesh: THREE.Mesh; velocity: THREE.Vector3; life: number; maxLife: number; initialScale: number; active: boolean }[] = [];
+  private ringPool: { mesh: THREE.Mesh; life: number; maxLife: number; maxScale: number; active: boolean }[] = [];
+  private tempTarget = new THREE.Vector3();
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
 
-    // Bright white spark geometry & glowing material
-    this.sparkGeo = new THREE.BoxGeometry(0.12, 0.12, 0.25);
-    this.sparkMat = new THREE.MeshBasicMaterial({
+    // Optimized geometries with reasonable polygon counts
+    this.sparkGeo = new THREE.BoxGeometry(0.10, 0.10, 0.40);
+    this.ringGeo = new THREE.TorusGeometry(0.5, 0.06, 8, 16);
+    this.ringGeo2 = new THREE.TorusGeometry(0.35, 0.05, 8, 14);
+    this.flashGeo = new THREE.SphereGeometry(0.5, 8, 8);
+    this.starGeo = new THREE.PlaneGeometry(1.8, 1.8);
+
+    // Instantiate static materials once
+    this.whiteFlashMat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
       opacity: 1.0,
+      depthWrite: false,
     });
-
-    // Expanding shockwave ring
-    this.ringGeo = new THREE.TorusGeometry(0.4, 0.05, 12, 24);
-    this.ringMat = new THREE.MeshBasicMaterial({
+    this.critStarMat = new THREE.MeshBasicMaterial({
+      color: 0xffd700,
+      transparent: true,
+      opacity: 0.95,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    this.stdStarMat = new THREE.MeshBasicMaterial({
+      color: 0x00ffff,
+      transparent: true,
+      opacity: 0.95,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    this.ringMatPrimary = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
       opacity: 0.95,
       side: THREE.DoubleSide,
+      depthWrite: false,
     });
-
-    // Pure white impact core flash
-    this.flashGeo = new THREE.SphereGeometry(0.45, 12, 12);
-    this.flashMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
+    this.ringMatSecondary = new THREE.MeshBasicMaterial({
+      color: 0x00ffff,
       transparent: true,
-      opacity: 1.0,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      depthWrite: false,
     });
-  }
+    this.whiteSparkMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1.0, depthWrite: false });
+    this.cyanSparkMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 1.0, depthWrite: false });
+    this.goldSparkMat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 1.0, depthWrite: false });
 
-  public spawn(position: THREE.Vector3, isCrit: boolean = false) {
-    const particleCount = isCrit ? 18 : 10;
+    // Pre-allocate pools
+    for (let i = 0; i < 40; i++) {
+      const pMesh = new THREE.Mesh(this.sparkGeo, this.cyanSparkMat);
+      pMesh.visible = false;
+      pMesh.frustumCulled = false;
+      this.scene.add(pMesh);
+      this.particlePool.push({
+        mesh: pMesh,
+        velocity: new THREE.Vector3(),
+        life: 0,
+        maxLife: 0.7,
+        initialScale: 1.0,
+        active: false,
+      });
+    }
 
-    // 1. Core White Flash
-    const flashMesh = new THREE.Mesh(this.flashGeo, this.flashMat.clone());
-    flashMesh.position.copy(position);
-    this.scene.add(flashMesh);
-    this.flashes.push({
-      mesh: flashMesh,
-      life: 0.12,
-      maxLife: 0.12,
-      maxScale: isCrit ? 2.5 : 1.5,
-    });
-
-    // 2. White Impact Shockwave Ring
-    const ringMesh = new THREE.Mesh(this.ringGeo, this.ringMat.clone());
-    ringMesh.position.copy(position);
-    ringMesh.rotation.set(
-      Math.random() * Math.PI,
-      Math.random() * Math.PI,
-      Math.random() * Math.PI
-    );
-    this.scene.add(ringMesh);
-    this.rings.push({
-      mesh: ringMesh,
-      life: 0.18,
-      maxLife: 0.18,
-      maxScale: isCrit ? 3.5 : 2.0,
-    });
-
-    // 3. Radial White Spark Particles
-    for (let i = 0; i < particleCount; i++) {
-      const sparkMesh = new THREE.Mesh(this.sparkGeo, this.sparkMat.clone());
-      sparkMesh.position.copy(position);
-
-      const dir = new THREE.Vector3(
-        (Math.random() - 0.5) * 2,
-        (Math.random() - 0.2) * 2,
-        (Math.random() - 0.5) * 2
-      ).normalize();
-
-      sparkMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
-
-      const speed = isCrit ? 12 + Math.random() * 16 : 8 + Math.random() * 10;
-      const velocity = dir.multiplyScalar(speed);
-      const life = 0.15 + Math.random() * 0.15;
-      const initialScale = isCrit ? 1.5 + Math.random() * 0.8 : 0.8 + Math.random() * 0.6;
-
-      sparkMesh.scale.setScalar(initialScale);
-      this.scene.add(sparkMesh);
-
-      this.particles.push({
-        mesh: sparkMesh,
-        velocity,
-        life,
-        maxLife: life,
-        initialScale,
+    for (let i = 0; i < 8; i++) {
+      const ring = new THREE.Mesh(this.ringGeo, this.ringMatSecondary);
+      ring.visible = false;
+      ring.frustumCulled = false;
+      this.scene.add(ring);
+      this.ringPool.push({
+        mesh: ring,
+        life: 0,
+        maxLife: 0.3,
+        maxScale: 4.5,
+        active: false,
       });
     }
   }
 
-  public update(delta: number) {
-    // Update core flashes
-    for (let i = this.flashes.length - 1; i >= 0; i--) {
-      const flash = this.flashes[i];
-      flash.life -= delta;
-      const progress = 1.0 - flash.life / flash.maxLife;
+  public spawn(position: THREE.Vector3, isCrit: boolean = false) {
+    // Disabled blue streak hit particles as requested
+    return;
+  }
 
-      const scale = 0.5 + progress * (flash.maxScale - 0.5);
-      flash.mesh.scale.setScalar(scale);
-
-      const mat = flash.mesh.material as THREE.MeshBasicMaterial;
-      mat.opacity = Math.max(0, 1.0 - progress);
-
-      if (flash.life <= 0) {
-        this.scene.remove(flash.mesh);
-        mat.dispose();
-        this.flashes.splice(i, 1);
-      }
+  public spawnIceShatter(position: THREE.Vector3) {
+    // 1. Cyan Shockwave Ring
+    const ring = this.ringPool.find((r) => !r.active);
+    if (ring) {
+      ring.active = true;
+      ring.life = 0.3;
+      ring.maxLife = 0.3;
+      ring.maxScale = 4.5;
+      ring.mesh.position.copy(position).add(new THREE.Vector3(0, 1.2, 0));
+      ring.mesh.rotation.x = Math.PI / 2;
+      ring.mesh.visible = true;
     }
 
+    // 2. Ice Shard Particles bursting outward
+    let count = 0;
+    for (const p of this.particlePool) {
+      if (p.active) continue;
+      p.active = true;
+      p.mesh.position.copy(position).add(new THREE.Vector3(
+        (Math.random() - 0.5) * 1.2,
+        1.0 + (Math.random() - 0.5) * 1.2,
+        (Math.random() - 0.5) * 1.2
+      ));
+
+      p.velocity.set(
+        (Math.random() - 0.5) * 18.0,
+        4.0 + Math.random() * 12.0,
+        (Math.random() - 0.5) * 18.0
+      );
+
+      this.tempTarget.copy(p.mesh.position).add(p.velocity);
+      p.mesh.lookAt(this.tempTarget);
+      p.life = 0.45 + Math.random() * 0.25;
+      p.maxLife = 0.7;
+      p.initialScale = 1.2 + Math.random() * 0.8;
+      p.mesh.visible = true;
+
+      count++;
+      if (count >= 10) break;
+    }
+  }
+
+  public update(delta: number) {
     // Update shockwave rings
-    for (let i = this.rings.length - 1; i >= 0; i--) {
-      const ring = this.rings[i];
+    for (const ring of this.ringPool) {
+      if (!ring.active) continue;
       ring.life -= delta;
       const progress = 1.0 - ring.life / ring.maxLife;
 
-      const scale = 0.5 + progress * ring.maxScale;
-      ring.mesh.scale.setScalar(scale);
-
-      const mat = ring.mesh.material as THREE.MeshBasicMaterial;
-      mat.opacity = Math.max(0, (1.0 - progress) * 0.95);
+      const scale = (0.4 + progress * ring.maxScale) * (1.0 - progress);
+      ring.mesh.scale.setScalar(Math.max(0.01, scale));
 
       if (ring.life <= 0) {
-        this.scene.remove(ring.mesh);
-        mat.dispose();
-        this.rings.splice(i, 1);
+        ring.active = false;
+        ring.mesh.visible = false;
       }
     }
 
     // Update white spark particles
-    for (let i = this.particles.length - 1; i >= 0; i--) {
-      const p = this.particles[i];
+    for (const p of this.particlePool) {
+      if (!p.active) continue;
       p.life -= delta;
       p.mesh.position.addScaledVector(p.velocity, delta);
 
-      p.velocity.multiplyScalar(Math.pow(0.1, delta));
+      p.velocity.multiplyScalar(Math.pow(0.08, delta));
 
       const progress = 1.0 - p.life / p.maxLife;
       const scale = p.initialScale * (1.0 - progress);
-      p.mesh.scale.setScalar(Math.max(0.01, scale));
-
-      const mat = p.mesh.material as THREE.MeshBasicMaterial;
-      mat.opacity = Math.max(0, 1.0 - progress);
+      p.mesh.scale.set(Math.max(0.01, scale * 0.5), Math.max(0.01, scale * 0.5), Math.max(0.01, scale * 1.6));
 
       if (p.life <= 0) {
-        this.scene.remove(p.mesh);
-        mat.dispose();
-        this.particles.splice(i, 1);
+        p.active = false;
+        p.mesh.visible = false;
       }
     }
   }
 
   public clear() {
-    for (const f of this.flashes) {
-      this.scene.remove(f.mesh);
-      (f.mesh.material as THREE.Material).dispose();
+    for (const r of this.ringPool) {
+      r.active = false;
+      r.mesh.visible = false;
     }
-    for (const r of this.rings) {
-      this.scene.remove(r.mesh);
-      (r.mesh.material as THREE.Material).dispose();
+    for (const p of this.particlePool) {
+      p.active = false;
+      p.mesh.visible = false;
     }
-    for (const p of this.particles) {
-      this.scene.remove(p.mesh);
-      (p.mesh.material as THREE.Material).dispose();
-    }
-    this.flashes = [];
-    this.rings = [];
-    this.particles = [];
   }
 }

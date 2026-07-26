@@ -4,6 +4,7 @@ import { PlayerProgress } from '../types';
 import { LoreModal } from './LoreModal';
 import { ArsenalModal } from './ArsenalModal';
 import { SettingsModal } from './SettingsModal';
+import { ResetConfirmModal } from './ResetConfirmModal';
 
 interface MainMenuProps {
   progress: PlayerProgress;
@@ -21,6 +22,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const [showLore, setShowLore] = useState(false);
   const [showArsenal, setShowArsenal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   return (
     <div className="relative min-h-screen bg-[#050505] text-[#F0F0F0] flex flex-col justify-between p-8 md:p-12 font-sans select-none overflow-hidden">
@@ -85,20 +87,16 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         <div className="grid grid-cols-2 gap-3">
           <button
             onClick={() => setShowSettings(true)}
-            className="py-3 bg-[#121212] hover:bg-[#1f1f1f] border border-white/10 rounded-lg text-xs font-bold text-gray-300 flex items-center justify-center gap-2 transition"
+            className="py-3.5 bg-[#121212] hover:bg-[#1f1f1f] border border-white/20 rounded-lg text-xs font-bold text-gray-300 flex items-center justify-center gap-2 transition"
           >
             <Settings className="w-4 h-4 text-gray-400" /> Настройки
           </button>
 
           <button
-            onClick={() => {
-              if (confirm('Сбросить весь прогресс уровней и арсенал?')) {
-                onResetProgress();
-              }
-            }}
-            className="py-3 bg-[#121212] hover:bg-[#1f1f1f] border border-white/10 rounded-lg text-xs font-bold text-gray-400 hover:text-[#C41E3A] flex items-center justify-center gap-2 transition"
+            onClick={() => setShowResetConfirm(true)}
+            className="py-3.5 bg-[#121212] hover:bg-red-950/40 border border-red-500/30 hover:border-red-500/70 rounded-lg text-xs font-bold text-gray-300 hover:text-red-400 flex items-center justify-center gap-2 transition shadow-md"
           >
-            <RotateCcw className="w-4 h-4" /> Сброс
+            <RotateCcw className="w-4 h-4 text-[#C41E3A]" /> Сброс прогресса
           </button>
         </div>
       </div>
@@ -124,6 +122,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           onClose={() => setShowSettings(false)}
         />
       )}
+
+      <ResetConfirmModal
+        isOpen={showResetConfirm}
+        onClose={() => setShowResetConfirm(false)}
+        onConfirm={onResetProgress}
+      />
     </div>
   );
 };

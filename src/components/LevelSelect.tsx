@@ -148,14 +148,14 @@ export const LevelSelect: React.FC<LevelSelectProps> = ({ progress, onSelectLeve
       </div>
 
       {/* SECRET LEVEL 17 CARD ("???") */}
-      <div className="relative z-10 mt-8 max-w-xl mx-auto w-full">
+      <div className="relative z-10 mt-8 max-w-xl mx-auto w-full flex flex-col gap-4">
         {(() => {
           const secretUnlocked = isLevelUnlocked(17);
           const secretRes = progress.completedLevels[17];
 
           return (
             <div
-              className={`p-6 bg-[#C41E3A] text-white flex items-center justify-between group cursor-pointer transition-all border border-red-400 shadow-[0_0_25px_rgba(196,30,58,0.5)] ${
+              className={`p-6 bg-[#C41E3A] text-white flex items-center justify-between group cursor-pointer transition-all border border-red-400 shadow-[0_0_25px_rgba(196,30,58,0.5)] rounded-lg ${
                 !secretUnlocked && 'opacity-60 cursor-not-allowed bg-neutral-900 border-neutral-800'
               }`}
               onClick={() => {
@@ -179,6 +179,25 @@ export const LevelSelect: React.FC<LevelSelectProps> = ({ progress, onSelectLeve
             </div>
           );
         })()}
+
+        {/* SECRET EXHIBITION ROOM CARD (DICK CODE) */}
+        <div
+          onClick={() => onSelectLevel(99)}
+          className="p-5 bg-gradient-to-r from-slate-900 via-sky-950 to-slate-900 text-white flex items-center justify-between group cursor-pointer transition-all border border-sky-400/50 hover:border-sky-300 shadow-[0_0_20px_rgba(56,189,248,0.3)] rounded-lg"
+        >
+          <div className="flex flex-col text-left">
+            <span className="text-[10px] uppercase font-bold tracking-widest text-sky-400 flex items-center gap-1.5">
+              <Star className="w-4 h-4 text-sky-400 fill-sky-400/20" /> Secret Bestiary Gallery // Code: DICK / ВШСЛ
+            </span>
+            <span className="text-xl md:text-2xl font-black italic tracking-wider text-white">СЕКРЕТНАЯ ВЫСТАВКА МОБОВ И БОССОВ</span>
+            <span className="text-xs text-sky-200/80 font-mono mt-1">
+              Все 12 мобов и 5 боссов стоят на месте с именами над головами (Наберите "dick" в любой момент)
+            </span>
+          </div>
+          <div className="text-lg md:text-xl font-black italic text-sky-300 group-hover:scale-105 transition px-3 py-1 bg-sky-950/80 border border-sky-400/40 rounded">
+            ВХОД ⚡
+          </div>
+        </div>
       </div>
 
       <footer className="relative z-10 mt-8 flex justify-between items-center border-t border-white/10 pt-4 text-[10px] tracking-widest font-mono text-gray-500">
