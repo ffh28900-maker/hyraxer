@@ -135,7 +135,7 @@ export const VictoryModal: React.FC<VictoryModalProps> = ({
                   </span>
                 </div>
               </div>
-              <p className="text-[10px] text-gray-400 font-mono mb-1">Выстрелы в воздухе, монетные рикошеты</p>
+              <p className="text-[10px] text-gray-400 font-mono mb-1">Выстрелы в воздухе, рикошеты</p>
               <div className="w-full h-1.5 bg-black rounded-full overflow-hidden border border-white/10">
                 <div
                   className="h-full bg-purple-400 shadow-[0_0_8px_#c084fc] transition-all duration-500"
